@@ -1,0 +1,45 @@
+name: SonarQube
+
+# SONAR_TOKEN is exposed to PR-controlled code, so this workflow must never install or run anything from
+# the caller's repo. Run tests in a separate job and hand coverage over as an artifact.
+on:
+  workflow_call:
+    inputs:
+      coverage-artifact:
+        description: Name of an artifact holding coverage reports; empty means no coverage
+        type: string
+        default: ''
+      coverage-path:
+        description: Where to download the coverage artifact, relative to the repo root
+        type: string
+        default: .
+    secrets:
+      SONAR_TOKEN:
+        required: false
+      SONAR_HOST_URL:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    # Dependabot runs get no repository secrets, so the scan could only fail.
+    if: github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - if: inputs.coverage-artifact != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.coverage-artifact }}
+          path: ${{ inputs.coverage-path }}
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
