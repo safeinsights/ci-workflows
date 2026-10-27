@@ -1,0 +1,270 @@
+# Security rules for R study submissions. Semgrep parses R but ships no registry rules for it, so
+# every R security check the scanner runs is defined here.
+#
+# Severity drives the reviewer gate: ERROR and WARNING findings fail it, INFO findings are reported
+# but never fail it. Patterns that also fire on ordinary reproducible-research code are INFO, because
+# a gate that is always red trains reviewers to ignore it.
+rules:
+    - id: r-eval-parse
+      languages: [r]
+      severity: ERROR
+      message: Evaluates text as R code. If the text comes from input, a file, or the network, it runs whatever that text contains.
+      metadata:
+          cwe: 'CWE-95: Eval Injection'
+      patterns:
+          - pattern-either:
+                - pattern: eval(parse(...))
+                - pattern: eval(str2lang(...))
+                - pattern: eval(str2expression(...))
+                - pattern: evalq(parse(...))
+          - pattern-not: eval(parse(text = "..."))
+
+    - id: r-dynamic-call-from-parameter
+      languages: [r]
+      severity: WARNING
+      message: Calls a function chosen by a parameter. A caller can pass the name of any function, including system().
+      metadata:
+          cwe: 'CWE-470: Use of Externally-Controlled Input to Select Classes or Code'
+      patterns:
+          - pattern-inside: function(..., $P, ...) $BODY
+          - pattern-either:
+                - pattern: do.call($P, ...)
+                - pattern: match.fun($P)
+
+    - id: r-command-injection
+      languages: [r]
+      severity: ERROR
+      message: Builds a shell command from strings. A value that contains shell characters runs extra commands.
+      metadata:
+          cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      patterns:
+          - pattern-either:
+                - pattern: $SYS(paste(...), ...)
+                - pattern: $SYS(paste0(...), ...)
+                - pattern: $SYS(sprintf(...), ...)
+                - pattern: $SYS(glue(...), ...)
+                - pattern: $SYS(glue::glue(...), ...)
+                - pattern: system2(..., args = paste(...), ...)
+                - pattern: system2(..., args = paste0(...), ...)
+                - pattern: system2(..., args = sprintf(...), ...)
+          - metavariable-regex:
+                metavariable: $SYS
+                regex: ^(system|system2|shell|pipe)$
+
+    - id: r-shell-command
+      languages: [r]
+      severity: WARNING
+      message: Runs a shell command. Study code does not need a shell; confirm what this command does.
+      metadata:
+          cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      patterns:
+          - pattern-either:
+                - pattern: system(...)
+                - pattern: system2(...)
+                - pattern: shell(...)
+                - pattern: processx::run(...)
+                - pattern: sys::exec_wait(...)
+          # Covered by r-command-injection and r-remote-code-execution, which say more.
+          - pattern-not: $SYS(paste(...), ...)
+          - pattern-not: $SYS(paste0(...), ...)
+          - pattern-not: $SYS(sprintf(...), ...)
+          - pattern-not: $SYS(glue(...), ...)
+          - pattern-not: $SYS(glue::glue(...), ...)
+          - pattern-not-regex: (curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh
+
+    - id: r-sql-injection
+      languages: [r]
+      severity: ERROR
+      message: Builds an SQL statement by joining strings. Pass values with params= or glue_sql() so the database treats them as data.
+      metadata:
+          cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      patterns:
+          - pattern-either:
+                - pattern: $Q($CON, paste(...), ...)
+                - pattern: $Q($CON, paste0(...), ...)
+                - pattern: $Q($CON, sprintf(...), ...)
+                - pattern: $Q($CON, glue(...), ...)
+                - pattern: $Q($CON, glue::glue(...), ...)
+                - pattern: $NS::$Q($CON, paste(...), ...)
+                - pattern: $NS::$Q($CON, paste0(...), ...)
+                - pattern: $NS::$Q($CON, sprintf(...), ...)
+                - pattern: $NS::$Q($CON, glue(...), ...)
+          - metavariable-regex:
+                metavariable: $Q
+                regex: ^(dbGetQuery|dbSendQuery|dbExecute|dbSendStatement|sqlQuery|sqldf)$
+
+    - id: r-remote-deserialization
+      languages: [r]
+      severity: ERROR
+      message: Loads a serialized R object from the network. A crafted object can run code when it is used.
+      metadata:
+          cwe: 'CWE-502: Deserialization of Untrusted Data'
+      pattern-either:
+          - pattern: readRDS(url(...), ...)
+          - pattern: readRDS(gzcon(url(...)), ...)
+          - pattern: load(url(...), ...)
+          - pattern: load(gzcon(url(...)), ...)
+          - pattern: unserialize(url(...), ...)
+          - pattern: unserialize(httr::content(...), ...)
+          - pattern: unserialize(curl::curl_fetch_memory(...)$content, ...)
+
+    - id: r-deserialization-from-parameter
+      languages: [r]
+      severity: INFO
+      message: Loads a serialized R object from a path given by a parameter. Confirm the file comes from the study data, not from outside the enclave.
+      metadata:
+          cwe: 'CWE-502: Deserialization of Untrusted Data'
+      patterns:
+          - pattern-inside: function(..., $P, ...) $BODY
+          - pattern-either:
+                - pattern: load($P, ...)
+                - pattern: readRDS($P, ...)
+                - pattern: unserialize($P, ...)
+
+    - id: r-tls-verification-disabled
+      languages: [r]
+      severity: ERROR
+      message: Turns off TLS certificate checks. Any host on the network path can then read or change the traffic.
+      metadata:
+          cwe: 'CWE-295: Improper Certificate Validation'
+      pattern-either:
+          - patterns:
+                - pattern-either:
+                      - pattern: $F(..., ssl_verifypeer = $V, ...)
+                      - pattern: $F(..., ssl_verifyhost = $V, ...)
+                - metavariable-regex:
+                      metavariable: $V
+                      regex: ^(0L?|FALSE|F)$
+          - patterns:
+                - pattern: options(..., download.file.extra = $X, ...)
+                - metavariable-regex:
+                      metavariable: $X
+                      regex: .*(^|\s|["'])(-k|--insecure)(\s|["']|$)
+
+    - id: r-remote-code-execution
+      languages: [r]
+      severity: ERROR
+      message: Downloads code and runs it. The code that runs is whatever the remote host sends at run time, not what was reviewed.
+      metadata:
+          cwe: 'CWE-494: Download of Code Without Integrity Check'
+      pattern-either:
+          - patterns:
+                - pattern: source($URL, ...)
+                - metavariable-regex:
+                      metavariable: $URL
+                      regex: ^["'](https?|ftp)://
+          - pattern: source(url(...), ...)
+          - pattern: devtools::source_url(...)
+          - pattern: devtools::source_gist(...)
+          - pattern: source_url(...)
+          - pattern: source_gist(...)
+          - patterns:
+                - pattern-either:
+                      - pattern: system($CMD, ...)
+                      - pattern: system2(..., $CMD, ...)
+                      - pattern: shell($CMD, ...)
+                - metavariable-regex:
+                      metavariable: $CMD
+                      regex: .*(curl|wget)[^|]*\|\s*(sudo\s+)?(ba|z)?sh
+
+    - id: r-weak-hash-for-secret
+      languages: [r]
+      severity: WARNING
+      message: Hashes a password or secret with MD5, SHA-1, or CRC32. These are fast to brute force; use a password hash such as sodium::password_store().
+      metadata:
+          cwe: 'CWE-328: Use of Weak Hash'
+      patterns:
+          - pattern-either:
+                - pattern: digest::digest($X, ..., algo = $A, ...)
+                - pattern: digest($X, ..., algo = $A, ...)
+          - metavariable-regex:
+                metavariable: $A
+                regex: ^["'](md5|sha1|crc32)["']$
+          - metavariable-regex:
+                metavariable: $X
+                regex: (?i)^[\w.]*(pass|pw|pwd|secret|token|cred)[\w.]*$
+
+    - id: r-predictable-token
+      languages: [r]
+      severity: INFO
+      message: Builds a random string with sample(). R's generator is predictable, so this is not safe for tokens or passwords. Ignore if it is for a simulation.
+      metadata:
+          cwe: 'CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)'
+      pattern-either:
+          - pattern: paste0(sample(...), ...)
+          - pattern: paste(sample(...), ...)
+
+    - id: r-path-from-parameter
+      languages: [r]
+      severity: INFO
+      message: Builds a file path from a parameter. A value such as "../../etc" reads outside the intended directory.
+      metadata:
+          cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      patterns:
+          - pattern-inside: function(..., $P, ...) $BODY
+          - pattern: file.path(..., $P, ...)
+
+    - id: r-world-writable-permissions
+      languages: [r]
+      severity: WARNING
+      message: Makes a file or directory writable by every user on the host.
+      metadata:
+          cwe: 'CWE-732: Incorrect Permission Assignment for Critical Resource'
+      patterns:
+          - pattern-either:
+                - pattern: Sys.chmod($P, $M, ...)
+                - pattern: Sys.chmod($P, mode = $M, ...)
+                - pattern: dir.create(..., mode = $M, ...)
+                - pattern: fs::file_chmod($P, $M, ...)
+          - metavariable-regex:
+                metavariable: $M
+                regex: ^["']?0?[0-7]?[0-7][2367]["']?$
+
+    - id: r-secret-in-log
+      languages: [r]
+      severity: WARNING
+      message: Writes a password, token, or key to output or a log. Output leaves the enclave for review, and logs are kept.
+      metadata:
+          cwe: 'CWE-532: Insertion of Sensitive Information into Log File'
+      patterns:
+          - pattern-either:
+                - pattern: cat(..., $V, ...)
+                - pattern: message(..., $V, ...)
+                - pattern: print($V, ...)
+                - pattern: warning(..., $V, ...)
+                - pattern: writeLines($V, ...)
+                - pattern: message(..., paste(..., $V, ...), ...)
+                - pattern: message(..., paste0(..., $V, ...), ...)
+                - pattern: message(..., sprintf(..., $V, ...), ...)
+          - metavariable-regex:
+                metavariable: $V
+                regex: (?i)^([\w.]*(passw(or)?d|pwd|secret|api_?key|access_?key|credential)[\w.]*|[\w.]*_token)$
+
+    - id: r-hardcoded-password
+      languages: [r]
+      severity: WARNING
+      message: Puts a password or secret in the code. Anyone who can read the code can use it.
+      metadata:
+          cwe: 'CWE-798: Use of Hard-coded Credentials'
+      patterns:
+          - pattern-either:
+                - pattern: $V <- "$S"
+                - pattern: $V = "$S"
+          - metavariable-regex:
+                metavariable: $V
+                regex: (?i)^([\w.]*(passw(or)?d|pwd|secret|api_?key|access_?key)[\w.]*|[\w.]*_token)$
+          - metavariable-regex:
+                metavariable: $S
+                regex: .{4,}
+
+    - id: r-silent-failure
+      languages: [r]
+      severity: INFO
+      message: Discards an error without a trace. A failed step then looks like a step that ran and found nothing.
+      metadata:
+          cwe: 'CWE-390: Detection of Error Condition Without Action'
+      pattern-either:
+          - pattern: try(..., silent = TRUE)
+          - pattern: tryCatch(..., error = function($E) NULL, ...)
+          - pattern: tryCatch(..., error = function($E) {}, ...)
+          - pattern: tryCatch(..., error = function($E) invisible(NULL), ...)

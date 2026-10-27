@@ -20,6 +20,31 @@ jobs:
         with:
           args: -color
 
+  trivy-fs:
+    uses: ./.github/workflows/trivy-fs.yaml
+
+  opengrep-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-opengrep
+      - name: Test the bundled rules against their fixtures
+        run: opengrep scan --test --disable-version-check --config .github/actions/opengrep/rules tests/opengrep
+      - name: Test the report and gate against findings at every severity
+        run: tests/opengrep-report/test.sh
+
+  # tests/ holds deliberately unsafe fixtures.
+  opengrep:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: ./.github/workflows/opengrep.yaml
+    with:
+      exclude: tests
+
   harbor-image:
     uses: ./.github/workflows/harbor-image.yaml
     with:

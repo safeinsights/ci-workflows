@@ -1,0 +1,70 @@
+name: Opengrep scan
+description: >-
+  Scans the checked-out repo with SafeInsights' rules plus registry rulesets, annotates findings,
+  keeps one PR comment up to date, and fails on findings at the chosen severities.
+
+inputs:
+  registry-configs:
+    description: Space-separated registry rulesets fetched at scan time, e.g. "p/python p/dockerfile"
+    default: p/python p/dockerfile
+  exclude:
+    description: Space-separated paths or globs to skip
+    default: ''
+  fail-on:
+    description: Comma-separated severities that fail the job (ERROR, WARNING, INFO)
+    default: ERROR
+  github-token:
+    description: Token for the PR comment; needs pull-requests write
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: $/.github/actions/setup-opengrep
+    - name: Scan
+      shell: bash
+      env:
+        REGISTRY_CONFIGS: ${{ inputs.registry-configs }}
+        EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        args=(--config "$GITHUB_ACTION_PATH/rules")
+        for c in $REGISTRY_CONFIGS; do args+=(--config "$c"); done
+        for e in $EXCLUDE; do args+=(--exclude "$e"); done
+        opengrep scan --disable-version-check "${args[@]}" --json-output="$RUNNER_TEMP/opengrep.json" .
+    - name: Report
+      id: report
+      shell: bash
+      env:
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        "$GITHUB_ACTION_PATH/report.sh" "$RUNNER_TEMP/opengrep.json" "$RUNNER_TEMP/opengrep-report.md"
+        cat "$RUNNER_TEMP/opengrep-report.md" >> "$GITHUB_STEP_SUMMARY"
+    # Edits the bot's previous report in place rather than adding a comment per push. Dependabot
+    # runs get a read-only token, so a failed comment must not fail the scan.
+    - name: Comment on the PR
+      if: github.event_name == 'pull_request'
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- opengrep-report -->"))) | .id')
+        id=${ids%%$'\n'*}
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/opengrep-report.md" > /dev/null
+        else
+          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/opengrep-report.md" > /dev/null
+        fi
+    - name: Fail on ${{ inputs.fail-on }} findings
+      shell: bash
+      env:
+        GATING: ${{ steps.report.outputs.gating }}
+        FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        if [ "$GATING" -gt 0 ]; then
+          echo "::error::$GATING Opengrep findings at $FAIL_ON; see the summary or the PR comment"
+          exit 1
+        fi

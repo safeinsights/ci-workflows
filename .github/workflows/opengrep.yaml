@@ -1,0 +1,40 @@
+name: Opengrep
+
+# The calling job must grant `pull-requests: write` (for the PR comment) as well as `contents: read`,
+# or GitHub rejects the run.
+on:
+  workflow_call:
+    inputs:
+      registry-configs:
+        description: Space-separated registry rulesets fetched at scan time
+        type: string
+        default: p/python p/dockerfile
+      exclude:
+        description: Space-separated paths or globs to skip
+        type: string
+        default: ''
+      fail-on:
+        description: Comma-separated severities that fail the job
+        type: string
+        default: ERROR
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # $/ resolves to this repo at the commit the caller pinned, so the bundled rules match the workflow.
+      - uses: $/.github/actions/opengrep
+        with:
+          registry-configs: ${{ inputs.registry-configs }}
+          exclude: ${{ inputs.exclude }}
+          fail-on: ${{ inputs.fail-on }}

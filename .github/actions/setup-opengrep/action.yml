@@ -1,0 +1,35 @@
+name: Set up Opengrep
+description: Downloads Opengrep, verifies its release signature, and puts it on PATH.
+
+runs:
+  using: composite
+  steps:
+    - name: Download Opengrep
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        OPENGREP_VERSION: v1.30.2
+      run: |
+        base="https://github.com/opengrep/opengrep/releases/download/$OPENGREP_VERSION"
+        for f in opengrep_manylinux_x86 opengrep_manylinux_x86.cert opengrep_manylinux_x86.sig; do
+          curl -fsSL --retry 3 -o "$f" "$base/$f"
+        done
+    - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: v3.1.4
+    # Opengrep publishes no checksums; each binary is signed keyless by its own release workflow.
+    - name: Verify and install Opengrep
+      shell: bash
+      working-directory: ${{ runner.temp }}
+      env:
+        OPENGREP_VERSION: v1.30.2
+      run: |
+        cosign verify-blob \
+          --certificate opengrep_manylinux_x86.cert \
+          --signature opengrep_manylinux_x86.sig \
+          --certificate-identity "https://github.com/opengrep/opengrep/.github/workflows/rolling-release.yml@refs/heads/release-$OPENGREP_VERSION" \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          opengrep_manylinux_x86
+        mkdir -p bin
+        install -m 0755 opengrep_manylinux_x86 bin/opengrep
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"

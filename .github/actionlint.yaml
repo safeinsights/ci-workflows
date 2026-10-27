@@ -1,0 +1,5 @@
+# actionlint 1.7.12 predates GitHub's `$/` self-repository action reference.
+paths:
+  .github/workflows/opengrep.yaml:
+    ignore:
+      - 'specifying action "\$/\.github/actions/opengrep" in invalid format'
