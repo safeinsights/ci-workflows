@@ -1,0 +1,480 @@
+# Security rules for Python study submissions. Written for flat analysis scripts, so there are no
+# web-framework rules: a study script has no request handlers for a taint rule to start from.
+#
+# Severity drives the reviewer gate: ERROR and WARNING findings fail it, INFO findings are reported
+# but never fail it. Patterns that also fire on ordinary research code are INFO, because a gate that
+# is always red trains reviewers to ignore it.
+rules:
+    - id: py-eval-exec
+      languages: [python]
+      severity: WARNING
+      message: Runs a string as Python code. If the string comes from input, a file, or the network, it runs whatever that string contains.
+      metadata:
+          cwe: 'CWE-95: Eval Injection'
+      patterns:
+          - pattern-either:
+                - pattern: eval(...)
+                - pattern: exec(...)
+          - pattern-not: eval("...", ...)
+          - pattern-not: exec("...", ...)
+          # Reported by py-remote-code-execution, which says more.
+          - pattern-not-inside: |
+                $SRC = requests.$GET(...).$BODY
+                ...
+          - pattern-not-inside: |
+                $SRC = httpx.$GET(...).$BODY
+                ...
+          - pattern-not-inside: |
+                $SRC = urllib.request.urlopen(...).read()
+                ...
+
+    - id: py-remote-code-execution
+      languages: [python]
+      severity: ERROR
+      message: Downloads code and runs it. The code that runs is whatever the remote host sends at run time, not what was reviewed.
+      metadata:
+          cwe: 'CWE-494: Download of Code Without Integrity Check'
+      pattern-either:
+          - patterns:
+                - pattern-either:
+                      - pattern: |
+                            $SRC = requests.$GET(...).$BODY
+                            ...
+                            $RUN($SRC, ...)
+                      - pattern: |
+                            $SRC = httpx.$GET(...).$BODY
+                            ...
+                            $RUN($SRC, ...)
+                      - pattern: |
+                            $SRC = urllib.request.urlopen(...).read()
+                            ...
+                            $RUN($SRC, ...)
+                      - pattern: $RUN(requests.$GET(...).$BODY, ...)
+                      - pattern: $RUN(httpx.$GET(...).$BODY, ...)
+                      - pattern: $RUN(urllib.request.urlopen(...).read(), ...)
+                - metavariable-regex:
+                      metavariable: $RUN
+                      regex: ^(eval|exec)$
+          - patterns:
+                - pattern: $SHELL($CMD, ...)
+                - metavariable-regex:
+                      metavariable: $SHELL
+                      regex: ^(os\.system|os\.popen|subprocess\.\w+)$
+                - metavariable-regex:
+                      metavariable: $CMD
+                      regex: .*(curl|wget)[^|]*\|\s*(sudo\s+)?(ba|z)?sh
+
+    - id: py-sql-injection
+      languages: [python]
+      severity: ERROR
+      message: Builds an SQL statement by joining strings. Pass values as query parameters so the database treats them as data.
+      metadata:
+          cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')"
+      patterns:
+          - pattern-either:
+                - pattern: $C.$EXEC("..." + $X, ...)
+                - pattern: $C.$EXEC($X + "...", ...)
+                - pattern: $C.$EXEC("..." % $X, ...)
+                - pattern: $C.$EXEC("...".format(...), ...)
+                - pattern: $C.$EXEC(f"...", ...)
+          - metavariable-regex:
+                metavariable: $EXEC
+                regex: ^(execute|executemany|executescript|read_sql|read_sql_query|sql)$
+
+    - id: py-command-injection
+      languages: [python]
+      severity: ERROR
+      message: Builds a shell command from strings. A value that contains shell characters runs extra commands.
+      metadata:
+          cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      patterns:
+          - pattern-either:
+                - pattern: $F("..." + $X, ...)
+                - pattern: $F($X + "...", ...)
+                - pattern: $F("..." % $X, ...)
+                - pattern: $F("...".format(...), ...)
+                - pattern: $F(f"...", ...)
+          - metavariable-regex:
+                metavariable: $F
+                regex: ^(os\.system|os\.popen|commands\.getoutput|commands\.getstatusoutput)$
+
+    - id: py-subprocess-shell-injection
+      languages: [python]
+      severity: ERROR
+      message: Runs a shell command built at run time with shell=True. A value that contains shell characters runs extra commands. Pass a list of arguments without shell=True.
+      metadata:
+          cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      patterns:
+          - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+          - pattern-not: subprocess.$F("...", ..., shell=True, ...)
+
+    - id: py-subprocess-shell
+      languages: [python]
+      severity: WARNING
+      message: Runs a shell command. Study code does not need a shell; confirm what this command does.
+      metadata:
+          cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')"
+      patterns:
+          - pattern: subprocess.$F("...", ..., shell=True, ...)
+          # Reported by py-remote-code-execution, which says more.
+          - pattern-not-regex: (curl|wget)[^|\n]*\|\s*(sudo\s+)?(ba|z)?sh
+
+    - id: py-remote-deserialization
+      languages: [python]
+      severity: ERROR
+      message: Deserializes data from the network. A crafted pickle runs code as it loads.
+      metadata:
+          cwe: 'CWE-502: Deserialization of Untrusted Data'
+      patterns:
+          - pattern-either:
+                - pattern: $LIB.$LOAD(requests.$GET(...).$BODY, ...)
+                - pattern: $LIB.$LOAD(httpx.$GET(...).$BODY, ...)
+                - pattern: $LIB.$LOAD(urllib.request.urlopen(...).read(), ...)
+                - pattern: |
+                      $DATA = requests.$GET(...).$BODY
+                      ...
+                      $LIB.$LOAD($DATA, ...)
+          - metavariable-regex:
+                metavariable: $LIB
+                regex: ^(pickle|cPickle|_pickle|dill|marshal|joblib|cloudpickle)$
+          - metavariable-regex:
+                metavariable: $LOAD
+                regex: ^loads?$
+
+    - id: py-local-deserialization
+      languages: [python]
+      severity: INFO
+      message: Loads a pickle-style file, which runs code as it loads. Confirm the file comes from the study data, not from outside the enclave.
+      metadata:
+          cwe: 'CWE-502: Deserialization of Untrusted Data'
+      pattern-either:
+          - patterns:
+                - pattern: $LIB.$LOAD(...)
+                - metavariable-regex:
+                      metavariable: $LIB
+                      regex: ^(pickle|cPickle|_pickle|dill|marshal|joblib|cloudpickle)$
+                - metavariable-regex:
+                      metavariable: $LOAD
+                      regex: ^loads?$
+                # Reported by py-remote-deserialization, which says more.
+                - pattern-not: $LIB.$LOAD(requests.$GET(...).$BODY, ...)
+                - pattern-not: $LIB.$LOAD(httpx.$GET(...).$BODY, ...)
+                - pattern-not: $LIB.$LOAD(urllib.request.urlopen(...).read(), ...)
+          - pattern: shelve.open(...)
+          - pattern: pandas.read_pickle(...)
+
+    - id: py-unsafe-yaml-load
+      languages: [python]
+      severity: ERROR
+      message: Loads YAML with a loader that can build arbitrary Python objects. Use yaml.safe_load().
+      metadata:
+          cwe: 'CWE-502: Deserialization of Untrusted Data'
+      pattern-either:
+          - pattern: yaml.unsafe_load(...)
+          - pattern: yaml.unsafe_load_all(...)
+          - pattern: yaml.load($X)
+          - pattern: yaml.load_all($X)
+          - patterns:
+                - pattern-either:
+                      - pattern: yaml.load(..., Loader=$L, ...)
+                      - pattern: yaml.load_all(..., Loader=$L, ...)
+                - metavariable-regex:
+                      metavariable: $L
+                      regex: ^(yaml\.)?(Loader|UnsafeLoader|FullLoader)$
+
+    - id: py-tls-verification-disabled
+      languages: [python]
+      severity: ERROR
+      message: Turns off TLS certificate checks. Any host on the network path can then read or change the traffic.
+      metadata:
+          cwe: 'CWE-295: Improper Certificate Validation'
+      pattern-either:
+          - pattern: $F(..., verify=False, ...)
+          - pattern: $S.verify = False
+          - pattern: $CTX.check_hostname = False
+          - pattern: $CTX.verify_mode = ssl.CERT_NONE
+          - pattern: ssl._create_unverified_context(...)
+          - pattern: ssl._create_default_https_context = ssl._create_unverified_context
+          - pattern: os.environ["PYTHONHTTPSVERIFY"] = "0"
+          - pattern: os.environ["CURL_CA_BUNDLE"] = ""
+          - pattern: os.environ["REQUESTS_CA_BUNDLE"] = ""
+
+    - id: py-cleartext-protocol
+      languages: [python]
+      severity: WARNING
+      message: Uses a protocol that sends credentials and data without encryption.
+      metadata:
+          cwe: 'CWE-319: Cleartext Transmission of Sensitive Information'
+      pattern-either:
+          - pattern: telnetlib.Telnet(...)
+          - pattern: ftplib.FTP(...)
+          - patterns:
+                - pattern: $HTTP.$M($URL, ..., auth=$A, ...)
+                - metavariable-regex:
+                      metavariable: $URL
+                      regex: ^["']http://
+
+    - id: py-ssh-unknown-host-accepted
+      languages: [python]
+      severity: WARNING
+      message: Accepts any SSH host key. A host on the network path can pose as the server.
+      metadata:
+          cwe: 'CWE-322: Key Exchange without Entity Authentication'
+      pattern-either:
+          - pattern: $C.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+          - pattern: $C.set_missing_host_key_policy(paramiko.WarningPolicy())
+
+    - id: py-weak-hash-for-secret
+      languages: [python]
+      severity: WARNING
+      message: Hashes a password or secret with MD5 or SHA-1. These are fast to brute force; use a password hash such as hashlib.scrypt() or argon2.
+      metadata:
+          cwe: 'CWE-328: Use of Weak Hash'
+      patterns:
+          - pattern-either:
+                - pattern: hashlib.md5($X, ...)
+                - pattern: hashlib.sha1($X, ...)
+                - pattern: hashlib.new("md5", $X, ...)
+                - pattern: hashlib.new("sha1", $X, ...)
+          - metavariable-regex:
+                metavariable: $X
+                regex: (?i)^[\w.]*(pass|pw|pwd|secret|token|cred)[\w.()]*$
+
+    - id: py-weak-hash
+      languages: [python]
+      severity: INFO
+      message: Uses MD5 or SHA-1. Fine for checksums and cache keys. Not fine for passwords or signatures, and an unsalted hash of an identifier does not de-identify it.
+      metadata:
+          cwe: 'CWE-328: Use of Weak Hash'
+      pattern-either:
+          - pattern: hashlib.md5()
+          - pattern: hashlib.sha1()
+          - patterns:
+                - pattern-either:
+                      - pattern: hashlib.md5($X, ...)
+                      - pattern: hashlib.sha1($X, ...)
+                      - pattern: hashlib.new("md5", $X, ...)
+                      - pattern: hashlib.new("sha1", $X, ...)
+                - pattern-not: hashlib.$H(..., usedforsecurity=False, ...)
+                # The negative lookahead leaves secrets to py-weak-hash-for-secret, which says more.
+                - metavariable-regex:
+                      metavariable: $X
+                      regex: (?i)^(?![\w.]*(pass|pw|pwd|secret|token|cred)[\w.()]*$)
+
+    - id: py-weak-cipher
+      languages: [python]
+      severity: WARNING
+      message: Uses a broken cipher or ECB mode. Use AES-GCM or ChaCha20-Poly1305.
+      metadata:
+          cwe: 'CWE-327: Use of a Broken or Risky Cryptographic Algorithm'
+      pattern-either:
+          - patterns:
+                - pattern-either:
+                      - pattern: Crypto.Cipher.$C.new(...)
+                      - pattern: Cryptodome.Cipher.$C.new(...)
+                      - pattern: cryptography.hazmat.primitives.ciphers.algorithms.$C(...)
+                      - pattern: cryptography.hazmat.decrepit.ciphers.algorithms.$C(...)
+                - metavariable-regex:
+                      metavariable: $C
+                      regex: ^(DES|DES3|TripleDES|ARC2|ARC4|Blowfish|CAST|CAST5|IDEA|SEED|XOR)$
+          - pattern: Crypto.Cipher.AES.new(..., Crypto.Cipher.AES.MODE_ECB, ...)
+          - pattern: Cryptodome.Cipher.AES.new(..., Cryptodome.Cipher.AES.MODE_ECB, ...)
+          - pattern: cryptography.hazmat.primitives.ciphers.modes.ECB(...)
+
+    - id: py-insecure-random-for-secret
+      languages: [python]
+      severity: INFO
+      message: Builds a token, password, or key with the random module. Its output is predictable; use the secrets module. Ignore if it is for a simulation.
+      metadata:
+          cwe: 'CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)'
+      patterns:
+          - pattern-inside: |
+                def $FN(...):
+                    ...
+          - metavariable-regex:
+                metavariable: $FN
+                regex: (?i).*(token|passw|secret|nonce|salt|otp|api_?key)
+          - pattern-either:
+                - pattern: random.$R(...)
+                - pattern: numpy.random.$R(...)
+
+    - id: py-world-writable-permissions
+      languages: [python]
+      severity: WARNING
+      message: Makes a file or directory writable by every user on the host.
+      metadata:
+          cwe: 'CWE-732: Incorrect Permission Assignment for Critical Resource'
+      patterns:
+          - pattern-either:
+                - pattern: os.chmod($P, $M, ...)
+                - pattern: os.mkdir($P, $M, ...)
+                - pattern: os.makedirs($P, $M, ...)
+                - pattern: $PATH.chmod($M)
+          - metavariable-regex:
+                metavariable: $M
+                regex: ^0o?[0-7]?[0-7][2367]$
+
+    - id: py-insecure-mktemp
+      languages: [python]
+      severity: WARNING
+      message: tempfile.mktemp() returns a name another process can create first. Use tempfile.mkstemp() or NamedTemporaryFile().
+      metadata:
+          cwe: 'CWE-377: Insecure Temporary File'
+      pattern: tempfile.mktemp(...)
+
+    - id: py-xml-parser
+      languages: [python]
+      severity: INFO
+      message: Parses XML with the standard library, which expands entities. A crafted file can read local files or exhaust memory. defusedxml has the same API without this risk.
+      metadata:
+          cwe: 'CWE-611: Improper Restriction of XML External Entity Reference'
+      pattern-either:
+          - pattern: xml.etree.ElementTree.parse(...)
+          - pattern: xml.etree.ElementTree.fromstring(...)
+          - pattern: xml.dom.minidom.parse(...)
+          - pattern: xml.dom.minidom.parseString(...)
+          - pattern: xml.sax.parse(...)
+          - pattern: lxml.etree.parse(...)
+          - pattern: lxml.etree.fromstring(...)
+
+    - id: py-server-exposed
+      languages: [python]
+      severity: WARNING
+      message: Starts a server on every network interface or with the debugger on. The Flask and Werkzeug debugger runs any code a visitor sends.
+      metadata:
+          cwe: 'CWE-489: Active Debug Code'
+      pattern-either:
+          - pattern: $APP.run(..., debug=True, ...)
+          - pattern: $APP.run(..., host="0.0.0.0", ...)
+          - pattern: $SOCK.bind(("0.0.0.0", $PORT))
+          - pattern: $SOCK.bind(("", $PORT))
+          - pattern: uvicorn.run(..., host="0.0.0.0", ...)
+
+    - id: py-path-from-parameter
+      languages: [python]
+      severity: INFO
+      message: Opens a path built from a parameter. A value such as "../../etc" reads outside the intended directory.
+      metadata:
+          cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      patterns:
+          - pattern-inside: |
+                def $FN(..., $P, ...):
+                    ...
+          - pattern-either:
+                - pattern: open(os.path.join(..., $P, ...), ...)
+                - pattern: open(pathlib.Path(...) / $P, ...)
+
+    - id: py-secret-in-log
+      languages: [python]
+      severity: WARNING
+      message: Writes a password, token, or key to output or a log. Output leaves the enclave for review, and logs are kept.
+      metadata:
+          cwe: 'CWE-532: Insertion of Sensitive Information into Log File'
+      patterns:
+          - pattern-either:
+                - pattern: print(..., $V, ...)
+                - pattern: print(f"...{$V}...", ...)
+                - pattern: logging.$L(..., $V, ...)
+                - pattern: logging.$L(f"...{$V}...", ...)
+                - pattern: $LOG.$L(f"...{$V}...", ...)
+                - pattern: $FH.write(f"...{$V}...")
+          - metavariable-regex:
+                metavariable: $V
+                regex: (?i)^([\w.]*(passw(or)?d|pwd|secret|api_?key|access_?key|credential)[\w.]*|[\w.]*_token)$
+
+    - id: py-hardcoded-password
+      languages: [python]
+      severity: WARNING
+      message: Puts a password or secret in the code. Anyone who can read the code can use it.
+      metadata:
+          cwe: 'CWE-798: Use of Hard-coded Credentials'
+      patterns:
+          - pattern: $V = "$S"
+          - metavariable-regex:
+                metavariable: $V
+                regex: (?i)^([\w.]*(passw(or)?d|pwd|secret|api_?key|access_?key)[\w.]*|[\w.]*_token)$
+          - metavariable-regex:
+                metavariable: $S
+                regex: .{4,}
+
+    - id: py-silent-exception
+      languages: [python]
+      severity: INFO
+      message: Discards an exception without a trace. A failed step then looks like a step that ran and found nothing.
+      metadata:
+          cwe: 'CWE-390: Detection of Error Condition Without Action'
+      pattern-either:
+          - pattern: |
+                try:
+                    ...
+                except:
+                    pass
+          - pattern: |
+                try:
+                    ...
+                except $E:
+                    pass
+
+    - id: py-assert-access-control
+      languages: [python]
+      severity: WARNING
+      message: Uses assert for an access check. Python removes assert statements under -O, which removes the check.
+      metadata:
+          cwe: 'CWE-617: Reachable Assertion'
+      patterns:
+          - pattern: assert $X, ...
+          - metavariable-regex:
+                metavariable: $X
+                regex: (?i).*\b(is_admin|admin|is_staff|is_superuser|superuser|permissions?|authori[sz]\w*|has_access|can_access|has_role|has_perm\w*)\b
+
+    - id: py-tarfile-extractall
+      languages: [python]
+      severity: WARNING
+      message: Extracts a tar archive without a filter. A member named "../x" or an absolute path writes outside the destination. Pass filter="data".
+      metadata:
+          cwe: "CWE-22: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')"
+      patterns:
+          - pattern-either:
+                - pattern-inside: |
+                      with tarfile.open(...) as $T:
+                          ...
+                - pattern-inside: |
+                      $T = tarfile.open(...)
+                      ...
+          - pattern-either:
+                - pattern: $T.extractall(...)
+                - pattern: $T.extract(...)
+          - pattern-not: $T.extractall(..., filter=$FL, ...)
+          - pattern-not: $T.extract(..., filter=$FL, ...)
+
+    - id: py-dynamic-dispatch
+      languages: [python]
+      severity: WARNING
+      message: Calls a function looked up by name at run time. A caller can pass the name of any function in scope.
+      metadata:
+          cwe: 'CWE-470: Use of Externally-Controlled Input to Select Classes or Code'
+      pattern-either:
+          - pattern: globals()[$X](...)
+          - pattern: locals()[$X](...)
+          - pattern: vars()[$X](...)
+
+    - id: py-shell-command
+      languages: [python]
+      severity: WARNING
+      message: Starts an external command. Review the executable and every argument, including values passed through variables.
+      # Qualified patterns, not a regex on the call text, so Semgrep resolves `import ... as` and
+      # `from ... import` forms.
+      pattern-either:
+          - pattern: os.system(...)
+          - pattern: os.popen(...)
+          - patterns:
+                - pattern: os.$F(...)
+                - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(exec|spawn|posix_spawn)\w*$
+          - pattern: subprocess.$F(...)
+          - pattern: commands.getoutput(...)
+          - pattern: commands.getstatusoutput(...)
+          - pattern: asyncio.create_subprocess_exec(...)
+          - pattern: asyncio.create_subprocess_shell(...)
+          - pattern: pty.spawn(...)

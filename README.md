@@ -7,6 +7,7 @@ Shared GitHub Actions workflows for SafeInsights repos. They replace the Jenkins
 |---|---|
 | [`harbor-image.yaml`](.github/workflows/harbor-image.yaml) | Builds and Trivy-scans a Docker image on every run; on `main`, pushes it to Harbor and signs it |
 | [`trivy-fs.yaml`](.github/workflows/trivy-fs.yaml) | Scans the repo for committed secrets (fails) and misconfigurations (reported) |
+| [`opengrep.yaml`](.github/workflows/opengrep.yaml) | Static analysis (SAST) with Opengrep: annotates findings, keeps one PR comment current, fails on ERROR |
 | [`sonarqube.yaml`](.github/workflows/sonarqube.yaml) | Runs a SonarQube scan, optionally with a coverage artifact from another job |
 
 ## Access
@@ -108,6 +109,45 @@ jobs:
     uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v1.1.0
 ```
 
+## `opengrep.yaml`
+
+Scans the caller's repo with [Opengrep](https://github.com/opengrep/opengrep), the LGPL fork of
+Semgrep's engine. It uses two sets of rules:
+
+- **SafeInsights rules** bundled in [`.github/actions/opengrep/rules`](.github/actions/opengrep/rules):
+  `python-security`, `r-security` and `secrets`. They are copied from iac's researcher-code scanner
+  (`management-app/codebuild/scripts/semgrep-rules`, iac commit `c49c9bd`), and they are the only
+  R coverage. When those rules change in iac, copy them here along with their fixtures in
+  `tests/opengrep`.
+- **Registry rulesets** (`registry-configs`, default `p/python p/dockerfile`), fetched from the
+  Semgrep registry at scan time. They are not pinned, so results can change between runs. They are
+  covered by the Semgrep Rules License, which allows this kind of internal use.
+
+Every non-INFO finding becomes an annotation on its line; GitHub shows the first 10 errors and 10
+warnings per step. On a PR, the full report goes into a single comment that is edited on each push.
+Findings at `fail-on` (default `ERROR`) fail the job. The Opengrep binary (v1.30.2) is checked
+against its keyless release signature before it runs.
+
+The calling job **must grant `pull-requests: write`**, or GitHub rejects the run. If the comment
+can't be posted (e.g. Dependabot's read-only token), the scan still runs and the gate still applies.
+
+| Input | Default | Notes |
+|---|---|---|
+| `registry-configs` | `p/python p/dockerfile` | Space-separated; empty for bundled rules only |
+| `exclude` | none | Space-separated paths or globs, e.g. `.old` |
+| `fail-on` | `ERROR` | Comma-separated severities |
+
+```yaml
+jobs:
+  opengrep:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: safeinsights/ci-workflows/.github/workflows/opengrep.yaml@<commit sha> # v1.1.0
+```
+
+To accept a specific finding, add a `# nosemgrep: <rule-id>` comment on its line, with a reason.
+
 ## `sonarqube.yaml`
 
 Reads `sonar-project.properties` from the caller's repo root. It never runs the caller's code,
@@ -136,7 +176,8 @@ jobs:
 
 ## Testing changes
 
-`self-test.yaml` runs on every PR. It runs actionlint, scans this repo with `trivy-fs.yaml`, and
+`self-test.yaml` runs on every PR. It runs actionlint, tests the bundled Opengrep rules against
+their fixtures (`opengrep scan --test`), scans this repo with `opengrep.yaml` and `trivy-fs.yaml`, and
 builds and scans `tests/fixtures/hello` through `harbor-image.yaml` without pushing. Pushing and
 signing only happen on a caller's `main`, so the first such run is the real test of a change to
 those steps. Locally: `actionlint` from the repo root.
