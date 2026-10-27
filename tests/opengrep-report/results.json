@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "check_id": "home.runner.work._actions.rules.py-sql-injection",
+      "path": "src/query.py",
+      "start": { "line": 12 },
+      "extra": { "severity": "ERROR", "message": "Builds an SQL statement by joining strings.\nUse query parameters." }
+    },
+    {
+      "check_id": "home.runner.work._actions.rules.py-eval-exec",
+      "path": "src/run.py",
+      "start": { "line": 3 },
+      "extra": { "severity": "ERROR", "message": "eval() runs arbitrary code | including user input" }
+    },
+    {
+      "check_id": "python.lang.security.audit.weak-hash",
+      "path": "src/hash.py",
+      "start": { "line": 7 },
+      "extra": { "severity": "WARNING", "message": "MD5 is a weak hash." }
+    },
+    {
+      "check_id": "home.runner.work._actions.rules.py-local-deserialization",
+      "path": "src/load.py",
+      "start": { "line": 20 },
+      "extra": { "severity": "INFO", "message": "Deserializes a local file." }
+    }
+  ],
+  "errors": []
+}

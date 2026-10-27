@@ -33,6 +33,8 @@ jobs:
       - uses: ./.github/actions/setup-opengrep
       - name: Test the bundled rules against their fixtures
         run: opengrep scan --test --disable-version-check --config .github/actions/opengrep/rules tests/opengrep
+      - name: Test the report and gate against findings at every severity
+        run: tests/opengrep-report/test.sh
 
   # tests/ holds deliberately unsafe fixtures.
   opengrep:

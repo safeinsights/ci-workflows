@@ -24,11 +24,23 @@ Pin callers to a full commit SHA, with the release tag as a comment, and let Dep
 propose updates:
 
 ```yaml
-uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v1.0.0
+uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v2.0.0
 ```
 
 Release by tagging `main` with a semver tag (`v1.0.0`, ...). A change to the inputs that would
 break existing callers needs a new major version.
+
+### Migrating from v1 to v2
+
+v2.0.0 adds security gates to `harbor-image.yaml` that can fail builds which passed on v1:
+
+- **Image scan:** every build is scanned with Trivy, and fixable `CRITICAL` vulnerabilities fail it
+  before anything is pushed. Fix them (e.g. `apt-get upgrade` in the Dockerfile), accept specific ones
+  with a `trivyignores` file, or change the threshold with `fail-on-severity`.
+- **Signing:** pushes are signed with cosign. Add the `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`
+  repo secrets and pass them in `secrets:`. A push without the key now fails up front.
+- **Single platform:** `platforms` must name one platform (the scanned image is the pushed image).
+- **New workflows:** `trivy-fs.yaml` (repo scan) and `opengrep.yaml` (static analysis) are opt-in.
 
 ## `harbor-image.yaml`
 
@@ -44,15 +56,16 @@ signature. The image that was scanned is the image that is pushed and signed.
 | `tag` | required | Template: `{date}` (UTC `YYYY-MM-DD`), `{sha}`, `{sha8}`, e.g. `4.5.1-{date}-{sha8}` |
 | `context` | `.` | Build context in the caller's repo |
 | `file` | `<context>/Dockerfile` | |
-| `platforms` | `linux/amd64` | |
+| `platforms` | `linux/amd64` | One platform only; the image is loaded locally so the scanned image is the pushed one. BuildKit provenance is not attached for the same reason |
 | `push` | `true` | `false` never pushes |
 | `fail-on-severity` | `CRITICAL` | e.g. `HIGH,CRITICAL` to be stricter |
 | `trivyignores` | none | Path to a `.trivyignore.yaml` in the caller's repo, for accepted findings |
 | `timeout-minutes` | `90` | |
 
 Secrets (all needed only when pushing): `HARBOR_USERNAME`, `HARBOR_TOKEN`, `COSIGN_PRIVATE_KEY`,
-`COSIGN_PASSWORD`. A push without `COSIGN_PRIVATE_KEY` fails rather than leaving an image
-unsigned. Outputs: `image-ref`, `digest`.
+`COSIGN_PASSWORD`. When pushing, a missing `HARBOR_USERNAME`, `HARBOR_TOKEN` or
+`COSIGN_PRIVATE_KEY` fails the job before it builds, so an unsigned image never reaches Harbor.
+Outputs: `image-ref`, `digest`.
 
 ### Signing key
 
@@ -61,8 +74,9 @@ transparency log. That keeps these private repos' names and digests out of a pub
 trade-off is that the key has to be managed:
 
 1. Generate the pair once: `cosign generate-key-pair` (it asks for a password).
-2. Store `cosign.key` as `COSIGN_PRIVATE_KEY` and the password as `COSIGN_PASSWORD`, in each
-   calling repo or as org secrets scoped to those repos. Then delete the local `cosign.key`.
+2. Store `cosign.key` as `COSIGN_PRIVATE_KEY` and the password as `COSIGN_PASSWORD` as repo
+   secrets in each calling repo (SafeInsights uses repo-level secrets only). Then delete the local
+   `cosign.key`.
 3. Publish `cosign.pub` where verifiers can read it.
 
 Verify an image:
@@ -82,7 +96,7 @@ jobs:
         include:
           - { dir: python-3.12, image: openstax/python-base, tag: '3.12-{date}-{sha8}' }
           - { dir: r-4.5.1, image: openstax/r-base, tag: '4.5.1-{date}-{sha8}' }
-    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v1.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v2.0.0
     with:
       image: harbor.safeinsights.org/${{ matrix.image }}
       tag: ${{ matrix.tag }}
@@ -106,7 +120,7 @@ such as Dockerfiles that run as root, are listed in the job summary without fail
 ```yaml
 jobs:
   trivy:
-    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v1.1.0
+    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v2.0.0
 ```
 
 ## `opengrep.yaml`
@@ -143,7 +157,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: safeinsights/ci-workflows/.github/workflows/opengrep.yaml@<commit sha> # v1.1.0
+    uses: safeinsights/ci-workflows/.github/workflows/opengrep.yaml@<commit sha> # v2.0.0
 ```
 
 To accept a specific finding, add a `# nosemgrep: <rule-id>` comment on its line, with a reason.
@@ -165,7 +179,7 @@ Secrets: `SONAR_TOKEN`, `SONAR_HOST_URL`.
 jobs:
   sonarqube:
     needs: test-Python
-    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v1.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v2.0.0
     with:
       coverage-artifact: python-coverage
       coverage-path: python-3.12

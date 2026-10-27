@@ -5,7 +5,8 @@ set -euo pipefail
 
 results=$1
 report=$2
-fail_on=${FAIL_ON:-ERROR}
+# Normalized so "error, warning" gates the same as "ERROR,WARNING" instead of silently gating nothing.
+fail_on=$(tr '[:lower:]' '[:upper:]' <<<"${FAIL_ON:-ERROR}" | tr -d '[:space:]')
 max_rows=100
 
 # Rule ids from local config files are prefixed with the rules' absolute path; keep the last segment.
