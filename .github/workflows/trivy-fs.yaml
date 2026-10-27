@@ -1,0 +1,59 @@
+name: Trivy repository scan
+
+# Fails on any committed secret. HIGH/CRITICAL misconfigurations (e.g. Dockerfiles) are reported in
+# the job summary but do not fail the job.
+on:
+  workflow_call:
+    inputs:
+      trivyignores:
+        description: Path to a .trivyignore(.yaml) in the caller's repo for accepted findings
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report secrets and misconfigurations
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,misconfig
+          severity: HIGH,CRITICAL
+          skip-dirs: .cache
+          format: table
+          output: trivy-fs.txt
+          exit-code: '0'
+          trivyignores: ${{ inputs.trivyignores }}
+          version: v0.70.0
+          cache-dir: ${{ github.workspace }}/.cache/trivy
+      - name: Add the report to the summary
+        run: |
+          {
+            echo "### HIGH/CRITICAL secrets and misconfigurations"
+            echo '```'
+            cat trivy-fs.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail on secrets
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          skip-dirs: .cache
+          format: table
+          exit-code: '1'
+          trivyignores: ${{ inputs.trivyignores }}
+          version: v0.70.0
+          cache-dir: ${{ github.workspace }}/.cache/trivy
+          skip-setup-trivy: true

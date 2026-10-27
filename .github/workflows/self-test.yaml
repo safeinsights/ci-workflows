@@ -20,6 +20,9 @@ jobs:
         with:
           args: -color
 
+  trivy-fs:
+    uses: ./.github/workflows/trivy-fs.yaml
+
   harbor-image:
     uses: ./.github/workflows/harbor-image.yaml
     with:
