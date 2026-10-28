@@ -4,7 +4,7 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-report="$here/../../.github/actions/opengrep/report.sh"
+report="$here/../../.github/actions/semgrep/report.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 

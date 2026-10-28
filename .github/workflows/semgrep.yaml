@@ -1,4 +1,4 @@
-name: Opengrep
+name: Semgrep
 
 # The calling job must grant `pull-requests: write` (for the PR comment) as well as `contents: read`,
 # or GitHub rejects the run.
@@ -8,7 +8,7 @@ on:
       registry-configs:
         description: Space-separated registry rulesets fetched at scan time
         type: string
-        default: p/python p/dockerfile
+        default: p/ci p/secrets p/python p/dockerfile p/github-actions p/javascript p/typescript
       exclude:
         description: Space-separated paths or globs to skip
         type: string
@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
       # $/ resolves to this repo at the commit the caller pinned, so the bundled rules match the workflow.
-      - uses: $/.github/actions/opengrep
+      - uses: $/.github/actions/semgrep
         with:
           registry-configs: ${{ inputs.registry-configs }}
           exclude: ${{ inputs.exclude }}

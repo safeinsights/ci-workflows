@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turns Opengrep JSON into GitHub annotations and a markdown report.
+# Turns Semgrep JSON into GitHub annotations and a markdown report.
 # Usage: report.sh <results.json> <report.md>; FAIL_ON is a comma-separated severity list.
 set -euo pipefail
 
@@ -26,11 +26,11 @@ jq -r '.[] | select(.severity != "INFO")
     | "::\(if .severity == "ERROR" then "error" else "warning" end) file=\(.path),line=\(.line),title=\(.rule)::\(.message | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))"' <<<"$findings"
 
 {
-    echo '<!-- opengrep-report -->'
+    echo '<!-- semgrep-report -->'
     if [ "$total" -eq 0 ]; then
-        echo '### Opengrep: no findings'
+        echo '### Semgrep: no findings'
     else
-        echo "### Opengrep: $total findings ($(jq -r 'group_by(.severity) | map("\(length) \(.[0].severity)") | join(", ")' <<<"$findings"))"
+        echo "### Semgrep: $total findings ($(jq -r 'group_by(.severity) | map("\(length) \(.[0].severity)") | join(", ")' <<<"$findings"))"
         echo
         echo "Fails on: \`$fail_on\`. Findings at those severities: **$gating**."
         echo
@@ -46,7 +46,7 @@ jq -r '.[] | select(.severity != "INFO")
     errors=$(jq '.errors | length' "$results")
     if [ "$errors" -gt 0 ]; then
         echo
-        echo "Opengrep reported $errors non-fatal errors (e.g. files it could not parse); see the job log."
+        echo "Semgrep reported $errors non-fatal errors (e.g. files it could not parse); see the job log."
     fi
 } >"$report"
 

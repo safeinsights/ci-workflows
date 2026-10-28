@@ -1,12 +1,12 @@
-name: Opengrep scan
+name: Semgrep scan
 description: >-
-  Scans the checked-out repo with SafeInsights' rules plus registry rulesets, annotates findings,
-  keeps one PR comment up to date, and fails on findings at the chosen severities.
+  Scans the checked-out repo with SafeInsights' rules plus Semgrep registry rulesets, annotates
+  findings, keeps one PR comment up to date, and fails on findings at the chosen severities.
 
 inputs:
   registry-configs:
-    description: Space-separated registry rulesets fetched at scan time, e.g. "p/python p/dockerfile"
-    default: p/python p/dockerfile
+    description: Space-separated registry rulesets fetched at scan time
+    default: p/ci p/secrets p/python p/dockerfile p/github-actions p/javascript p/typescript
   exclude:
     description: Space-separated paths or globs to skip
     default: ''
@@ -20,7 +20,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: $/.github/actions/setup-opengrep
+    - uses: $/.github/actions/setup-semgrep
+    # A .semgrepignore in the caller's repo is honoured; it replaces Semgrep's default ignore list.
     - name: Scan
       shell: bash
       env:
@@ -30,15 +31,15 @@ runs:
         args=(--config "$GITHUB_ACTION_PATH/rules")
         for c in $REGISTRY_CONFIGS; do args+=(--config "$c"); done
         for e in $EXCLUDE; do args+=(--exclude "$e"); done
-        opengrep scan --disable-version-check "${args[@]}" --json-output="$RUNNER_TEMP/opengrep.json" .
+        semgrep scan --metrics=off --disable-version-check "${args[@]}" --json --output "$RUNNER_TEMP/semgrep.json" .
     - name: Report
       id: report
       shell: bash
       env:
         FAIL_ON: ${{ inputs.fail-on }}
       run: |
-        "$GITHUB_ACTION_PATH/report.sh" "$RUNNER_TEMP/opengrep.json" "$RUNNER_TEMP/opengrep-report.md"
-        cat "$RUNNER_TEMP/opengrep-report.md" >> "$GITHUB_STEP_SUMMARY"
+        "$GITHUB_ACTION_PATH/report.sh" "$RUNNER_TEMP/semgrep.json" "$RUNNER_TEMP/semgrep-report.md"
+        cat "$RUNNER_TEMP/semgrep-report.md" >> "$GITHUB_STEP_SUMMARY"
     # Edits the bot's previous report in place rather than adding a comment per push. Dependabot
     # runs get a read-only token, so a failed comment must not fail the scan.
     - name: Comment on the PR
@@ -51,12 +52,12 @@ runs:
         PR: ${{ github.event.pull_request.number }}
       run: |
         ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- opengrep-report -->"))) | .id')
+          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- semgrep-report -->"))) | .id')
         id=${ids%%$'\n'*}
         if [ -n "$id" ]; then
-          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/opengrep-report.md" > /dev/null
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/semgrep-report.md" > /dev/null
         else
-          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/opengrep-report.md" > /dev/null
+          gh api "repos/$REPO/issues/$PR/comments" -F body=@"$RUNNER_TEMP/semgrep-report.md" > /dev/null
         fi
     - name: Fail on ${{ inputs.fail-on }} findings
       shell: bash
@@ -65,6 +66,6 @@ runs:
         FAIL_ON: ${{ inputs.fail-on }}
       run: |
         if [ "$GATING" -gt 0 ]; then
-          echo "::error::$GATING Opengrep findings at $FAIL_ON; see the summary or the PR comment"
+          echo "::error::$GATING Semgrep findings at $FAIL_ON; see the summary or the PR comment"
           exit 1
         fi
