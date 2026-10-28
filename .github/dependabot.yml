@@ -4,7 +4,17 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A freshly published action version waits a week before Dependabot proposes it.
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns:
           - '*'
+  # Semgrep and its dependencies, locked in setup-semgrep/uv.lock.
+  - package-ecosystem: uv
+    directory: /.github/actions/setup-semgrep
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

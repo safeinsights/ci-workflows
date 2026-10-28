@@ -23,6 +23,30 @@
       "path": "src/load.py",
       "start": { "line": 20 },
       "extra": { "severity": "INFO", "message": "Deserializes a local file." }
+    },
+    {
+      "check_id": "python.lang.security.audit.exec-detected",
+      "path": "src/exec.py",
+      "start": { "line": 9 },
+      "extra": { "severity": "CRITICAL", "message": "exec() of user-controlled input." }
+    },
+    {
+      "check_id": "python.lang.security.audit.dangerous-system-call",
+      "path": "src/sys.py",
+      "start": { "line": 4 },
+      "extra": { "severity": "HIGH", "message": "os.system() with a variable command." }
+    },
+    {
+      "check_id": "yaml.github-actions.security.dependabot-missing-cooldown",
+      "path": ".github/dependabot.yml",
+      "start": { "line": 3 },
+      "extra": { "severity": "MEDIUM", "message": "No cooldown configured for dependency updates." }
+    },
+    {
+      "check_id": "python.lang.best-practice.open-never-closed",
+      "path": "src/low.py",
+      "start": { "line": 2 },
+      "extra": { "severity": "LOW", "message": "File handle is never closed." }
     }
   ],
   "errors": []

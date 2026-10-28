@@ -7,7 +7,7 @@ Shared GitHub Actions workflows for SafeInsights repos. They replace the Jenkins
 |---|---|
 | [`harbor-image.yaml`](.github/workflows/harbor-image.yaml) | Builds and Trivy-scans a Docker image on every run; on `main`, pushes it to Harbor and signs it |
 | [`trivy-fs.yaml`](.github/workflows/trivy-fs.yaml) | Scans the repo for committed secrets (fails) and misconfigurations (reported) |
-| [`opengrep.yaml`](.github/workflows/opengrep.yaml) | Static analysis (SAST) with Opengrep: annotates findings, keeps one PR comment current, fails on ERROR |
+| [`semgrep.yaml`](.github/workflows/semgrep.yaml) | Static analysis (SAST) with Semgrep CE: SafeInsights rules plus registry packs, annotates findings, keeps one PR comment current, fails on ERROR |
 | [`sonarqube.yaml`](.github/workflows/sonarqube.yaml) | Runs a SonarQube scan, optionally with a coverage artifact from another job |
 
 ## Access
@@ -24,7 +24,7 @@ Pin callers to a full commit SHA, with the release tag as a comment, and let Dep
 propose updates:
 
 ```yaml
-uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v2.0.0
+uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v3.0.0
 ```
 
 Release by tagging `main` with a semver tag (`v1.0.0`, ...). A change to the inputs that would
@@ -40,7 +40,21 @@ v2.0.0 adds security gates to `harbor-image.yaml` that can fail builds which pas
 - **Signing:** pushes are signed with cosign. Add the `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`
   repo secrets and pass them in `secrets:`. A push without the key now fails up front.
 - **Single platform:** `platforms` must name one platform (the scanned image is the pushed image).
-- **New workflows:** `trivy-fs.yaml` (repo scan) and `opengrep.yaml` (static analysis) are opt-in.
+- **New workflows:** `trivy-fs.yaml` (repo scan) and `semgrep.yaml` (static analysis; called
+  `opengrep.yaml` in v2) are opt-in.
+
+### Migrating from v2 to v3
+
+v3.0.0 replaces Opengrep with Semgrep Community Edition and renames the workflow:
+
+- `uses: .../opengrep.yaml@…` becomes `uses: .../semgrep.yaml@…`. The inputs (`registry-configs`,
+  `exclude`, `fail-on`) and the `pull-requests: write` requirement are unchanged.
+- The default registry packs grow from `p/python p/dockerfile` to
+  `p/ci p/secrets p/python p/dockerfile p/github-actions p/javascript p/typescript`, so a repo that
+  passed on v2 can gain findings. Pass `registry-configs` explicitly to keep the old set.
+- A `.semgrepignore` in the caller's repo is now honoured. It replaces Semgrep's built-in ignore
+  list (`.git`, `node_modules`, …), so restate those entries in it.
+- Existing `# nosemgrep: <rule-id>` suppressions work unchanged.
 
 ## `harbor-image.yaml`
 
@@ -96,7 +110,7 @@ jobs:
         include:
           - { dir: python-3.12, image: openstax/python-base, tag: '3.12-{date}-{sha8}' }
           - { dir: r-4.5.1, image: openstax/r-base, tag: '4.5.1-{date}-{sha8}' }
-    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v2.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v3.0.0
     with:
       image: harbor.safeinsights.org/${{ matrix.image }}
       tag: ${{ matrix.tag }}
@@ -120,47 +134,70 @@ such as Dockerfiles that run as root, are listed in the job summary without fail
 ```yaml
 jobs:
   trivy:
-    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v2.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v3.0.0
 ```
 
-## `opengrep.yaml`
+## `semgrep.yaml`
 
-Scans the caller's repo with [Opengrep](https://github.com/opengrep/opengrep), the LGPL fork of
-Semgrep's engine. It uses two sets of rules:
+Scans the caller's repo with Semgrep Community Edition (public rulesets, no account, no token).
+Semgrep is installed by [`.github/actions/setup-semgrep`](.github/actions/setup-semgrep) from a
+hash-locked `uv.lock`, the uv equivalent of a SHA-pinned action, with a pinned uv. Dependabot
+proposes Semgrep bumps (`uv` ecosystem); the manual procedure and the uv pin are described in the
+action's `pyproject.toml`. Two sets of rules run:
 
-- **SafeInsights rules** bundled in [`.github/actions/opengrep/rules`](.github/actions/opengrep/rules):
+- **SafeInsights rules** bundled in [`.github/actions/semgrep/rules`](.github/actions/semgrep/rules):
   `python-security`, `r-security` and `secrets`. They are copied from iac's researcher-code scanner
-  (`management-app/codebuild/scripts/semgrep-rules`, iac commit `c49c9bd`), and they are the only
-  R coverage. When those rules change in iac, copy them here along with their fixtures in
-  `tests/opengrep`.
-- **Registry rulesets** (`registry-configs`, default `p/python p/dockerfile`), fetched from the
-  Semgrep registry at scan time. They are not pinned, so results can change between runs. They are
-  covered by the Semgrep Rules License, which allows this kind of internal use.
+  (`management-app/codebuild/scripts/semgrep-rules`, iac commit `c49c9bd`). When those rules change
+  in iac, copy them here along with their fixtures in `tests/semgrep`.
+- **Registry packs** (`registry-configs`), fetched from the Semgrep registry at scan time. They are
+  not pinned, so results can change between runs. They are covered by the Semgrep Rules License,
+  which allows this kind of internal use.
+
+Language coverage, with the default packs:
+
+| Language | Covered by |
+|---|---|
+| Python | bundled `python-security` + `p/python`, `p/ci`, `p/secrets` |
+| R | bundled `r-security` only: the Semgrep registry has **no R pack** |
+| Dockerfiles | `p/dockerfile` |
+| GitHub Actions workflows | `p/github-actions` |
+| JavaScript / TypeScript | `p/javascript`, `p/typescript`, `p/ci` |
+| Shell, YAML, everything else | `p/ci` and `p/secrets` where they have rules; there are no `p/bash` or `p/yaml` packs |
 
 Every non-INFO finding becomes an annotation on its line; GitHub shows the first 10 errors and 10
 warnings per step. On a PR, the full report goes into a single comment that is edited on each push.
-Findings at `fail-on` (default `ERROR`) fail the job. The Opengrep binary (v1.30.2) is checked
-against its keyless release signature before it runs.
+Findings at `fail-on` (default `ERROR`) fail the job. Registry rules also use Semgrep's
+CRITICAL/HIGH/MEDIUM/LOW scale; those count as ERROR, ERROR, WARNING and INFO for `fail-on`, and
+the report shows both, e.g. `ERROR (CRITICAL)`.
 
 The calling job **must grant `pull-requests: write`**, or GitHub rejects the run. If the comment
 can't be posted (e.g. Dependabot's read-only token), the scan still runs and the gate still applies.
 
 | Input | Default | Notes |
 |---|---|---|
-| `registry-configs` | `p/python p/dockerfile` | Space-separated; empty for bundled rules only |
+| `registry-configs` | `p/ci p/secrets p/python p/dockerfile p/github-actions p/javascript p/typescript` | Space-separated; empty for bundled rules only |
 | `exclude` | none | Space-separated paths or globs, e.g. `.old` |
 | `fail-on` | `ERROR` | Comma-separated severities |
 
+Without a `.semgrepignore` at the caller's repo root, Semgrep's built-in ignore list applies, at any
+depth: VCS and package-manager directories (`.git`, `.svn`, `.hg`, `_darcs`, `CVS`, `node_modules/`,
+`.npm/`, `.yarn/`, `.venv/`, `.env/`, `.tox/`, `_opam/`, `_build/`, `_cargo/`), build output
+(`build/`, `dist/`, `vendor/`, `*.min.js`) and **test trees** (`test/`, `tests/`, `testsuite/`,
+`*_test.go`). So Semgrep does not look at tests; `trivy-fs.yaml` still scans them for secrets. A
+root `.semgrepignore` **replaces** that list entirely: an empty one scans everything, and one that
+restates only `.git/`, `node_modules/` and `.venv/` scans the test trees too.
+
 ```yaml
 jobs:
-  opengrep:
+  semgrep:
     permissions:
       contents: read
       pull-requests: write
-    uses: safeinsights/ci-workflows/.github/workflows/opengrep.yaml@<commit sha> # v2.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/semgrep.yaml@<commit sha> # v3.0.0
 ```
 
-To accept a specific finding, add a `# nosemgrep: <rule-id>` comment on its line, with a reason.
+To accept a specific finding, add a `# nosemgrep: <rule-id>` comment with a reason on the line of
+the match or the line before it.
 
 ## `sonarqube.yaml`
 
@@ -179,7 +216,7 @@ Secrets: `SONAR_TOKEN`, `SONAR_HOST_URL`.
 jobs:
   sonarqube:
     needs: test-Python
-    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v2.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v3.0.0
     with:
       coverage-artifact: python-coverage
       coverage-path: python-3.12
@@ -190,8 +227,8 @@ jobs:
 
 ## Testing changes
 
-`self-test.yaml` runs on every PR. It runs actionlint, tests the bundled Opengrep rules against
-their fixtures (`opengrep scan --test`), scans this repo with `opengrep.yaml` and `trivy-fs.yaml`, and
+`self-test.yaml` runs on every PR. It runs actionlint, tests the bundled Semgrep rules against
+their fixtures (`semgrep scan --test`), scans this repo with `semgrep.yaml` and `trivy-fs.yaml`, and
 builds and scans `tests/fixtures/hello` through `harbor-image.yaml` without pushing. Pushing and
 signing only happen on a caller's `main`, so the first such run is the real test of a change to
 those steps. Locally: `actionlint` from the repo root.

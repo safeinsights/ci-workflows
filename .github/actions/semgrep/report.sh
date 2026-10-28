@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Turns Opengrep JSON into GitHub annotations and a markdown report.
+# Turns Semgrep JSON into GitHub annotations and a markdown report.
 # Usage: report.sh <results.json> <report.md>; FAIL_ON is a comma-separated severity list.
 set -euo pipefail
 
@@ -10,8 +10,15 @@ fail_on=$(tr '[:lower:]' '[:upper:]' <<<"${FAIL_ON:-ERROR}" | tr -d '[:space:]')
 max_rows=100
 
 # Rule ids from local config files are prefixed with the rules' absolute path; keep the last segment.
+# Registry rules also use CRITICAL/HIGH/MEDIUM/LOW; fold them into the three levels FAIL_ON names,
+# keeping the original for the table.
 findings=$(jq -c '[.results[] | {
-    severity: .extra.severity,
+    raw: (.extra.severity | ascii_upcase),
+    severity: (.extra.severity | ascii_upcase
+        | if . == "CRITICAL" or . == "HIGH" then "ERROR"
+          elif . == "MEDIUM" then "WARNING"
+          elif . == "LOW" then "INFO"
+          else . end),
     rule: (.check_id | split(".") | last),
     path: .path,
     line: .start.line,
@@ -26,18 +33,18 @@ jq -r '.[] | select(.severity != "INFO")
     | "::\(if .severity == "ERROR" then "error" else "warning" end) file=\(.path),line=\(.line),title=\(.rule)::\(.message | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"))"' <<<"$findings"
 
 {
-    echo '<!-- opengrep-report -->'
+    echo '<!-- semgrep-report -->'
     if [ "$total" -eq 0 ]; then
-        echo '### Opengrep: no findings'
+        echo '### Semgrep: no findings'
     else
-        echo "### Opengrep: $total findings ($(jq -r 'group_by(.severity) | map("\(length) \(.[0].severity)") | join(", ")' <<<"$findings"))"
+        echo "### Semgrep: $total findings ($(jq -r 'group_by(.severity) | map("\(length) \(.[0].severity)") | join(", ")' <<<"$findings"))"
         echo
         echo "Fails on: \`$fail_on\`. Findings at those severities: **$gating**."
         echo
         echo '| Severity | Rule | Location | Message |'
         echo '|---|---|---|---|'
         jq -r --argjson max "$max_rows" '.[:$max][]
-            | "| \(.severity) | `\(.rule)` | `\(.path):\(.line)` | \(.message | gsub("\\|"; "\\|") | .[:140]) |"' <<<"$findings"
+            | "| \(.severity)\(if .raw != .severity then " (\(.raw))" else "" end) | `\(.rule)` | `\(.path):\(.line)` | \(.message | gsub("\\|"; "\\|") | .[:140]) |"' <<<"$findings"
         if [ "$total" -gt "$max_rows" ]; then
             echo
             echo "Showing the first $max_rows of $total. The job log has the full list."
@@ -46,7 +53,7 @@ jq -r '.[] | select(.severity != "INFO")
     errors=$(jq '.errors | length' "$results")
     if [ "$errors" -gt 0 ]; then
         echo
-        echo "Opengrep reported $errors non-fatal errors (e.g. files it could not parse); see the job log."
+        echo "Semgrep reported $errors non-fatal errors (e.g. files it could not parse); see the job log."
     fi
 } >"$report"
 
