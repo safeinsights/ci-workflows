@@ -10,8 +10,15 @@ fail_on=$(tr '[:lower:]' '[:upper:]' <<<"${FAIL_ON:-ERROR}" | tr -d '[:space:]')
 max_rows=100
 
 # Rule ids from local config files are prefixed with the rules' absolute path; keep the last segment.
+# Registry rules also use CRITICAL/HIGH/MEDIUM/LOW; fold them into the three levels FAIL_ON names,
+# keeping the original for the table.
 findings=$(jq -c '[.results[] | {
-    severity: .extra.severity,
+    raw: (.extra.severity | ascii_upcase),
+    severity: (.extra.severity | ascii_upcase
+        | if . == "CRITICAL" or . == "HIGH" then "ERROR"
+          elif . == "MEDIUM" then "WARNING"
+          elif . == "LOW" then "INFO"
+          else . end),
     rule: (.check_id | split(".") | last),
     path: .path,
     line: .start.line,
@@ -37,7 +44,7 @@ jq -r '.[] | select(.severity != "INFO")
         echo '| Severity | Rule | Location | Message |'
         echo '|---|---|---|---|'
         jq -r --argjson max "$max_rows" '.[:$max][]
-            | "| \(.severity) | `\(.rule)` | `\(.path):\(.line)` | \(.message | gsub("\\|"; "\\|") | .[:140]) |"' <<<"$findings"
+            | "| \(.severity)\(if .raw != .severity then " (\(.raw))" else "" end) | `\(.rule)` | `\(.path):\(.line)` | \(.message | gsub("\\|"; "\\|") | .[:140]) |"' <<<"$findings"
         if [ "$total" -gt "$max_rows" ]; then
             echo
             echo "Showing the first $max_rows of $total. The job log has the full list."

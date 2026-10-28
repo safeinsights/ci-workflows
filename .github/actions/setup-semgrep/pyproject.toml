@@ -1,8 +1,9 @@
 # Semgrep CE for the semgrep action. uv.lock next to this file pins Semgrep and every transitive
 # dependency with hashes, the uv equivalent of a SHA-pinned action, and setup-semgrep installs it
-# with `uv sync --locked`. To bump Semgrep: change the version below, run
-# `uv lock --project .github/actions/setup-semgrep` from the repo root, and commit both files.
-# Dependabot does not manage this lock. The project is virtual: nothing of ours is built.
+# with `uv sync --locked`. Dependabot (`uv` ecosystem) proposes bumps. To bump by hand: change the
+# version below, run `uv lock --project .github/actions/setup-semgrep` from the repo root, and
+# commit both files. uv itself is pinned in setup-semgrep/action.yml. The project is virtual:
+# nothing of ours is built.
 [project]
 name = "semgrep-ci"
 version = "0"

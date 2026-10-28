@@ -40,7 +40,8 @@ v2.0.0 adds security gates to `harbor-image.yaml` that can fail builds which pas
 - **Signing:** pushes are signed with cosign. Add the `COSIGN_PRIVATE_KEY` and `COSIGN_PASSWORD`
   repo secrets and pass them in `secrets:`. A push without the key now fails up front.
 - **Single platform:** `platforms` must name one platform (the scanned image is the pushed image).
-- **New workflows:** `trivy-fs.yaml` (repo scan) and `opengrep.yaml` (static analysis) are opt-in.
+- **New workflows:** `trivy-fs.yaml` (repo scan) and `semgrep.yaml` (static analysis; called
+  `opengrep.yaml` in v2) are opt-in.
 
 ### Migrating from v2 to v3
 
@@ -140,8 +141,9 @@ jobs:
 
 Scans the caller's repo with Semgrep Community Edition (public rulesets, no account, no token).
 Semgrep is installed by [`.github/actions/setup-semgrep`](.github/actions/setup-semgrep) from a
-hash-locked `uv.lock`, the uv equivalent of a SHA-pinned action; the bump procedure is in its
-`pyproject.toml`. Two sets of rules run:
+hash-locked `uv.lock`, the uv equivalent of a SHA-pinned action, with a pinned uv. Dependabot
+proposes Semgrep bumps (`uv` ecosystem); the manual procedure and the uv pin are described in the
+action's `pyproject.toml`. Two sets of rules run:
 
 - **SafeInsights rules** bundled in [`.github/actions/semgrep/rules`](.github/actions/semgrep/rules):
   `python-security`, `r-security` and `secrets`. They are copied from iac's researcher-code scanner
@@ -164,7 +166,9 @@ Language coverage, with the default packs:
 
 Every non-INFO finding becomes an annotation on its line; GitHub shows the first 10 errors and 10
 warnings per step. On a PR, the full report goes into a single comment that is edited on each push.
-Findings at `fail-on` (default `ERROR`) fail the job.
+Findings at `fail-on` (default `ERROR`) fail the job. Registry rules also use Semgrep's
+CRITICAL/HIGH/MEDIUM/LOW scale; those count as ERROR, ERROR, WARNING and INFO for `fail-on`, and
+the report shows both, e.g. `ERROR (CRITICAL)`.
 
 The calling job **must grant `pull-requests: write`**, or GitHub rejects the run. If the comment
 can't be posted (e.g. Dependabot's read-only token), the scan still runs and the gate still applies.
@@ -175,8 +179,13 @@ can't be posted (e.g. Dependabot's read-only token), the scan still runs and the
 | `exclude` | none | Space-separated paths or globs, e.g. `.old` |
 | `fail-on` | `ERROR` | Comma-separated severities |
 
-A `.semgrepignore` at the caller's repo root is honoured. It **replaces** Semgrep's default ignore
-list, so restate `.git/`, `node_modules/`, `.venv/` and the like in it.
+Without a `.semgrepignore` at the caller's repo root, Semgrep's built-in ignore list applies, at any
+depth: VCS and package-manager directories (`.git`, `.svn`, `.hg`, `_darcs`, `CVS`, `node_modules/`,
+`.npm/`, `.yarn/`, `.venv/`, `.env/`, `.tox/`, `_opam/`, `_build/`, `_cargo/`), build output
+(`build/`, `dist/`, `vendor/`, `*.min.js`) and **test trees** (`test/`, `tests/`, `testsuite/`,
+`*_test.go`). So Semgrep does not look at tests; `trivy-fs.yaml` still scans them for secrets. A
+root `.semgrepignore` **replaces** that list entirely: an empty one scans everything, and one that
+restates only `.git/`, `node_modules/` and `.venv/` scans the test trees too.
 
 ```yaml
 jobs:

@@ -20,17 +20,23 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: $/.github/actions/setup-semgrep
-    # A .semgrepignore in the caller's repo is honoured; it replaces Semgrep's default ignore list.
+    # `$/` resolves to this repo at the caller's pinned commit; it cannot carry an @sha, so the
+    # mutable-tag rule misreads it.
+    - uses: $/.github/actions/setup-semgrep # nosemgrep: github-actions-mutable-action-tag
+    # A .semgrepignore in the caller's repo is honoured; it replaces Semgrep's built-in ignore list,
+    # which skips test/, tests/, vendor/, build/, dist/ and *.min.js (see the README).
     - name: Scan
       shell: bash
       env:
         REGISTRY_CONFIGS: ${{ inputs.registry-configs }}
         EXCLUDE: ${{ inputs.exclude }}
       run: |
+        # read, not an unquoted $VAR, so a glob like *.min.js reaches Semgrep instead of the shell.
+        read -ra configs <<< "$REGISTRY_CONFIGS"
+        read -ra excludes <<< "$EXCLUDE"
         args=(--config "$GITHUB_ACTION_PATH/rules")
-        for c in $REGISTRY_CONFIGS; do args+=(--config "$c"); done
-        for e in $EXCLUDE; do args+=(--exclude "$e"); done
+        for c in "${configs[@]}"; do args+=(--config "$c"); done
+        for e in "${excludes[@]}"; do args+=(--exclude "$e"); done
         semgrep scan --metrics=off --disable-version-check "${args[@]}" --json --output "$RUNNER_TEMP/semgrep.json" .
     - name: Report
       id: report
@@ -40,8 +46,9 @@ runs:
       run: |
         "$GITHUB_ACTION_PATH/report.sh" "$RUNNER_TEMP/semgrep.json" "$RUNNER_TEMP/semgrep-report.md"
         cat "$RUNNER_TEMP/semgrep-report.md" >> "$GITHUB_STEP_SUMMARY"
-    # Edits the bot's previous report in place rather than adding a comment per push. Dependabot
-    # runs get a read-only token, so a failed comment must not fail the scan.
+    # Edits the bot's previous report in place rather than adding a comment per push; a PR opened
+    # under v2 has an Opengrep report, which is taken over. Dependabot runs get a read-only token,
+    # so a failed comment must not fail the scan.
     - name: Comment on the PR
       if: github.event_name == 'pull_request'
       continue-on-error: true
@@ -52,7 +59,7 @@ runs:
         PR: ${{ github.event.pull_request.number }}
       run: |
         ids=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
-          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- semgrep-report -->"))) | .id')
+          --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | startswith("<!-- semgrep-report -->") or startswith("<!-- opengrep-report -->"))) | .id')
         id=${ids%%$'\n'*}
         if [ -n "$id" ]; then
           gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@"$RUNNER_TEMP/semgrep-report.md" > /dev/null

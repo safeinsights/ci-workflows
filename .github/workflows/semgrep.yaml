@@ -32,8 +32,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # $/ resolves to this repo at the commit the caller pinned, so the bundled rules match the workflow.
-      - uses: $/.github/actions/semgrep
+      # $/ resolves to this repo at the commit the caller pinned, so the bundled rules match the
+      # workflow. It cannot carry an @sha, so the mutable-tag rule misreads it.
+      - uses: $/.github/actions/semgrep # nosemgrep: github-actions-mutable-action-tag
         with:
           registry-configs: ${{ inputs.registry-configs }}
           exclude: ${{ inputs.exclude }}

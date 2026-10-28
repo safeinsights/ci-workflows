@@ -24,21 +24,27 @@ expect_gating() {
     echo "ok: FAIL_ON='$1' -> gating=$got"
 }
 
-expect_gating ERROR 2
-expect_gating ERROR,WARNING 3
-expect_gating 'error, warning' 3
-expect_gating INFO 1
+# The fixture holds 2 ERROR, 1 WARNING, 1 INFO plus one each of Semgrep's CRITICAL, HIGH, MEDIUM
+# and LOW, which must count as ERROR, ERROR, WARNING and INFO respectively.
+expect_gating ERROR 4
+expect_gating ERROR,WARNING 6
+expect_gating 'error, warning' 6
+expect_gating INFO 2
 
 run ERROR "$here/results.json"
 errors=$(grep -c '^::error ' "$tmp/annotations" || true)
 warnings=$(grep -c '^::warning ' "$tmp/annotations" || true)
-if [ "$errors" != 2 ] || [ "$warnings" != 1 ]; then
-    echo "FAIL: annotations errors=$errors warnings=$warnings, want 2 and 1 (INFO is not annotated)"
+if [ "$errors" != 4 ] || [ "$warnings" != 2 ]; then
+    echo "FAIL: annotations errors=$errors warnings=$warnings, want 4 and 2 (INFO is not annotated)"
     exit 1
 fi
-rows=$(grep -c '^| \(ERROR\|WARNING\|INFO\) |' "$tmp/report.md" || true)
-if [ "$rows" != 4 ]; then
-    echo "FAIL: report table has $rows rows, want 4"
+rows=$(grep -c '^| \(ERROR\|WARNING\|INFO\)' "$tmp/report.md" || true)
+if [ "$rows" != 8 ]; then
+    echo "FAIL: report table has $rows rows, want 8"
+    exit 1
+fi
+if ! grep -q '^| ERROR (CRITICAL)' "$tmp/report.md"; then
+    echo "FAIL: the table should show Semgrep's own severity next to the mapped one"
     exit 1
 fi
 echo "ok: annotations and report table"

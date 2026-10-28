@@ -31,6 +31,8 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup-semgrep
+      - name: The runner's python is not shadowed by Semgrep's venv
+        run: python3 -c 'import sys; sys.exit(".venv" in sys.prefix)'
       - name: Test the bundled rules against their fixtures
         run: semgrep scan --test --metrics=off --disable-version-check --config .github/actions/semgrep/rules tests/semgrep
       - name: Test the report and gate against findings at every severity
