@@ -3,3 +3,6 @@ paths:
   .github/workflows/semgrep.yaml:
     ignore:
       - 'specifying action "\$/\.github/actions/semgrep" in invalid format'
+  .github/workflows/harbor-image.yaml:
+    ignore:
+      - 'specifying action "\$/\.github/actions/build-scan" in invalid format'

@@ -53,5 +53,7 @@ jobs:
       image: harbor.safeinsights.org/ci-workflows/self-test
       tag: test-{date}-{sha8}
       context: tests/fixtures/hello
+      # Never pushes, so the environment is never entered; the name only satisfies the input.
+      environment: harbor
       push: false
       timeout-minutes: 10

@@ -1,0 +1,96 @@
+name: Build and scan an image
+description: >-
+  Builds a single-platform image into the local daemon, reports its fixable HIGH/CRITICAL
+  vulnerabilities and fails on the chosen severities. Shared by both jobs of harbor-image.yaml.
+
+inputs:
+  image:
+    description: Full image name without a tag
+    required: true
+  tag:
+    description: Tag template; {date}, {sha} and {sha8} are substituted
+    required: true
+  context:
+    default: .
+  file:
+    description: Dockerfile path; empty means <context>/Dockerfile
+    default: ''
+  platforms:
+    default: linux/amd64
+  fail-on-severity:
+    default: CRITICAL
+  trivyignores:
+    default: ''
+
+outputs:
+  image-ref:
+    description: The image reference that was built
+    value: ${{ steps.ref.outputs.image-ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve image reference
+      id: ref
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        TAG_TEMPLATE: ${{ inputs.tag }}
+        PLATFORMS: ${{ inputs.platforms }}
+      run: |
+        if [[ "$PLATFORMS" == *,* ]]; then
+          echo "::error::platforms must be a single platform: the image is loaded into the local daemon so the scanned image is the pushed one"
+          exit 1
+        fi
+        tag="${TAG_TEMPLATE//\{date\}/$(date -u +%Y-%m-%d)}"
+        tag="${tag//\{sha8\}/${GITHUB_SHA::8}}"
+        tag="${tag//\{sha\}/${GITHUB_SHA}}"
+        if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+          echo "::error::'$TAG_TEMPLATE' resolves to '$tag', which is not a valid Docker tag"
+          exit 1
+        fi
+        echo "image-ref=${IMAGE}:${tag}" >> "$GITHUB_OUTPUT"
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    # Loaded into the local daemon so Trivy scans, and docker push ships, this exact image.
+    - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platforms }}
+        load: true
+        tags: ${{ steps.ref.outputs.image-ref }}
+    - name: Report image vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ steps.ref.outputs.image-ref }}
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        format: table
+        output: trivy-image.txt
+        exit-code: '0'
+        trivyignores: ${{ inputs.trivyignores }}
+        version: v0.70.0
+        cache-dir: ${{ github.workspace }}/.cache/trivy
+    - name: Add the report to the summary
+      shell: bash
+      run: |
+        {
+          echo "### Fixable HIGH/CRITICAL vulnerabilities"
+          echo '```'
+          cat trivy-image.txt
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+    - name: Fail on ${{ inputs.fail-on-severity }} vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        image-ref: ${{ steps.ref.outputs.image-ref }}
+        scanners: vuln
+        severity: ${{ inputs.fail-on-severity }}
+        ignore-unfixed: true
+        format: table
+        exit-code: '1'
+        trivyignores: ${{ inputs.trivyignores }}
+        version: v0.70.0
+        cache-dir: ${{ github.workspace }}/.cache/trivy
+        skip-setup-trivy: true
