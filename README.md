@@ -24,7 +24,7 @@ Pin callers to a full commit SHA, with the release tag as a comment, and let Dep
 propose updates:
 
 ```yaml
-uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v3.0.0
+uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v4.0.0
 ```
 
 Release by tagging `main` with a semver tag (`v1.0.0`, ...). A change to the inputs that would
@@ -56,18 +56,43 @@ v3.0.0 replaces Opengrep with Semgrep Community Edition and renames the workflow
   list (`.git`, `node_modules`, …), so restate those entries in it.
 - Existing `# nosemgrep: <rule-id>` suppressions work unchanged.
 
+### Migrating from v3 to v4
+
+v4.0.0 moves the Harbor and cosign secrets out of pull requests' reach:
+
+- `harbor-image.yaml` has a new required input, `environment`, and runs as two jobs: `build` (PRs,
+  no secrets) and `push` (`main` only, inside that environment). A caller that gated on the job
+  name `build` now sees `build` on PRs and `push` on `main`.
+- Create the environment with a `main`-only deployment branch policy and move the four secrets
+  into it; see "Setting up a caller". Until the secrets are moved, the `push` job fails its secret
+  check and nothing is pushed.
+- **Two scans are added** (both were in mars-university's own pipeline): the image scan also
+  looks for secrets in layers, and `trivy-fs.yaml` also scans dependency manifests and lockfiles,
+  failing on fixable CRITICAL vulnerabilities (`fail-on-severity`). A repo that passed on v3 can
+  gain findings; `trivyignores` accepts specific ones.
+
 ## `harbor-image.yaml`
 
-Every run builds the image and scans it with Trivy. Fixable HIGH and CRITICAL vulnerabilities are
-listed in the job summary. Fixable vulnerabilities at `fail-on-severity` fail the job before
-anything is pushed. The workflow pushes only when `push` is true (the default), the event is not a
-pull request, and the ref is `main`. It then signs the pushed digest with cosign and verifies the
-signature. The image that was scanned is the image that is pushed and signed.
+Every run builds the image and scans it with Trivy for vulnerabilities and for secrets baked into
+a layer. Fixable HIGH and CRITICAL findings are listed in the job summary. Fixable findings at
+`fail-on-severity` fail the job before anything is pushed. Two jobs share those steps:
+
+- `build` runs on pull requests and on branches other than `main`. It holds no secret.
+- `push` runs only when `push` is true (the default), the event is not a pull request, and the ref
+  is `main`. It runs inside the caller's `environment`, builds and scans again, pushes, then signs
+  the pushed digest with cosign and verifies the signature. The image that was scanned in this job
+  is the image that is pushed and signed.
+
+The split is what keeps the secrets off pull requests: a PR can edit the caller's workflow, but a
+job it adds cannot enter an environment whose deployment branch policy allows `main` only. That
+holds only while the secrets exist nowhere else. A repository secret of the same name still reaches
+PR runs, and the `push` job cannot tell which copy it got, so step 2 below deletes them.
 
 | Input | Default | Notes |
 |---|---|---|
 | `image` | required | e.g. `harbor.safeinsights.org/openstax/r-base` |
 | `tag` | required | Template: `{date}` (UTC `YYYY-MM-DD`), `{sha}`, `{sha8}`, e.g. `4.5.1-{date}-{sha8}` |
+| `environment` | required | GitHub environment in the caller's repo that holds the four secrets below; see "Setting up a caller" |
 | `context` | `.` | Build context in the caller's repo |
 | `file` | `<context>/Dockerfile` | |
 | `platforms` | `linux/amd64` | One platform only; the image is loaded locally so the scanned image is the pushed one. BuildKit provenance is not attached for the same reason |
@@ -77,9 +102,22 @@ signature. The image that was scanned is the image that is pushed and signed.
 | `timeout-minutes` | `90` | |
 
 Secrets (all needed only when pushing): `HARBOR_USERNAME`, `HARBOR_TOKEN`, `COSIGN_PRIVATE_KEY`,
-`COSIGN_PASSWORD`. When pushing, a missing `HARBOR_USERNAME`, `HARBOR_TOKEN` or
-`COSIGN_PRIVATE_KEY` fails the job before it builds, so an unsigned image never reaches Harbor.
-Outputs: `image-ref`, `digest`.
+`COSIGN_PASSWORD`. The caller passes them by name as usual; GitHub resolves them from the
+environment named in `environment`. A missing `HARBOR_USERNAME`, `HARBOR_TOKEN` or
+`COSIGN_PRIVATE_KEY` fails the `push` job before it builds, so an unsigned image never reaches
+Harbor. Outputs: `image-ref`, `digest`.
+
+### Setting up a caller
+
+1. In the calling repo, create an environment (the examples use `harbor`) with **Deployment
+   branches and tags → Selected branches and tags → `main`**, or fix an existing one: check that
+   its policy is exactly that before moving any secret into it. "No restriction" admits pull
+   requests, and "Protected branches only" admits every protected branch. Create it before the
+   first run on `main`: a job that names a missing environment creates it with no branch policy.
+2. Add the four secrets to that environment, not as repository secrets, and remove any repository
+   secrets of the same name. A secret that exists only in the environment is empty on a pull
+   request, which is the point. (SafeInsights uses no org secrets.)
+3. Pass `environment: harbor` in `with:`.
 
 ### Signing key
 
@@ -88,9 +126,8 @@ transparency log. That keeps these private repos' names and digests out of a pub
 trade-off is that the key has to be managed:
 
 1. Generate the pair once: `cosign generate-key-pair` (it asks for a password).
-2. Store `cosign.key` as `COSIGN_PRIVATE_KEY` and the password as `COSIGN_PASSWORD` as repo
-   secrets in each calling repo (SafeInsights uses repo-level secrets only). Then delete the local
-   `cosign.key`.
+2. Store `cosign.key` as `COSIGN_PRIVATE_KEY` and the password as `COSIGN_PASSWORD` in each
+   calling repo's environment (see "Setting up a caller"). Then delete the local `cosign.key`.
 3. Publish `cosign.pub` where verifiers can read it.
 
 Verify an image:
@@ -110,11 +147,12 @@ jobs:
         include:
           - { dir: python-3.12, image: openstax/python-base, tag: '3.12-{date}-{sha8}' }
           - { dir: r-4.5.1, image: openstax/r-base, tag: '4.5.1-{date}-{sha8}' }
-    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v3.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/harbor-image.yaml@<commit sha> # v4.0.0
     with:
       image: harbor.safeinsights.org/${{ matrix.image }}
       tag: ${{ matrix.tag }}
       context: ${{ matrix.dir }}
+      environment: harbor
     secrets:
       HARBOR_USERNAME: ${{ secrets.HARBOR_USERNAME }}
       HARBOR_TOKEN: ${{ secrets.HARBOR_TOKEN }}
@@ -124,17 +162,21 @@ jobs:
 
 ## `trivy-fs.yaml`
 
-Scans the caller's repo. Any committed secret fails the job. HIGH and CRITICAL misconfigurations,
-such as Dockerfiles that run as root, are listed in the job summary without failing.
+Scans the caller's repo. Any committed secret fails the job, and so does a fixable vulnerability
+at `fail-on-severity` in a dependency manifest or lockfile (dev dependencies included where Trivy
+distinguishes them: npm, yarn, gradle). HIGH and CRITICAL misconfigurations, such as Dockerfiles that run as root, and the
+other fixable HIGH/CRITICAL dependency vulnerabilities are listed in the job summary without
+failing. Trivy does not index CRAN, so R packages are not covered.
 
 | Input | Default | Notes |
 |---|---|---|
 | `trivyignores` | none | Path to a `.trivyignore.yaml` in the caller's repo, for accepted findings |
+| `fail-on-severity` | `CRITICAL` | e.g. `HIGH,CRITICAL` to be stricter |
 
 ```yaml
 jobs:
   trivy:
-    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v3.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/trivy-fs.yaml@<commit sha> # v4.0.0
 ```
 
 ## `semgrep.yaml`
@@ -193,7 +235,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: safeinsights/ci-workflows/.github/workflows/semgrep.yaml@<commit sha> # v3.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/semgrep.yaml@<commit sha> # v4.0.0
 ```
 
 To accept a specific finding, add a `# nosemgrep: <rule-id>` comment with a reason on the line of
@@ -216,7 +258,7 @@ Secrets: `SONAR_TOKEN`, `SONAR_HOST_URL`.
 jobs:
   sonarqube:
     needs: test-Python
-    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v3.0.0
+    uses: safeinsights/ci-workflows/.github/workflows/sonarqube.yaml@<commit sha> # v4.0.0
     with:
       coverage-artifact: python-coverage
       coverage-path: python-3.12

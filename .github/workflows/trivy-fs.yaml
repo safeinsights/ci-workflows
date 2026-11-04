@@ -1,7 +1,8 @@
 name: Trivy repository scan
 
-# Fails on any committed secret. HIGH/CRITICAL misconfigurations (e.g. Dockerfiles) are reported in
-# the job summary but do not fail the job.
+# Fails on any committed secret and on fixable `fail-on-severity` vulnerabilities in dependency
+# manifests and lockfiles. HIGH/CRITICAL misconfigurations (e.g. Dockerfiles) and the other
+# fixable HIGH/CRITICAL dependency vulnerabilities are reported in the job summary but do not fail.
 on:
   workflow_call:
     inputs:
@@ -9,6 +10,10 @@ on:
         description: Path to a .trivyignore(.yaml) in the caller's repo for accepted findings
         type: string
         default: ''
+      fail-on-severity:
+        description: Fixable dependency vulnerabilities at these severities fail the job; HIGH and CRITICAL are always reported
+        type: string
+        default: CRITICAL
 
 permissions:
   contents: read
@@ -17,17 +22,21 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # Dev dependencies run in CI, so they count where Trivy can tell them apart (npm, yarn, gradle).
+      TRIVY_INCLUDE_DEV_DEPS: 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Report secrets and misconfigurations
+      - name: Report secrets, misconfigurations and dependency vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
-          scanners: secret,misconfig
+          scanners: vuln,secret,misconfig
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           skip-dirs: .cache
           format: table
           output: trivy-fs.txt
@@ -38,7 +47,7 @@ jobs:
       - name: Add the report to the summary
         run: |
           {
-            echo "### HIGH/CRITICAL secrets and misconfigurations"
+            echo "### HIGH/CRITICAL secrets, misconfigurations and fixable dependency vulnerabilities"
             echo '```'
             cat trivy-fs.txt
             echo '```'
@@ -50,6 +59,21 @@ jobs:
           scan-ref: .
           scanners: secret
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          skip-dirs: .cache
+          format: table
+          exit-code: '1'
+          trivyignores: ${{ inputs.trivyignores }}
+          version: v0.70.0
+          cache-dir: ${{ github.workspace }}/.cache/trivy
+          skip-setup-trivy: true
+      - name: Fail on ${{ inputs.fail-on-severity }} dependency vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: ${{ inputs.fail-on-severity }}
+          ignore-unfixed: true
           skip-dirs: .cache
           format: table
           exit-code: '1'

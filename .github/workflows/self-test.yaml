@@ -53,5 +53,35 @@ jobs:
       image: harbor.safeinsights.org/ci-workflows/self-test
       tag: test-{date}-{sha8}
       context: tests/fixtures/hello
+      # Never pushes, so the environment is never entered; the name only satisfies the input.
+      environment: harbor
       push: false
       timeout-minutes: 10
+
+  # With push true on a pull request, `build` must run and `push` must be skipped, and the
+  # workflow's image-ref output must fall back to the build job's. Never on main: this repo has no
+  # harbor environment or secrets.
+  harbor-image-pr:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/harbor-image.yaml
+    with:
+      image: harbor.safeinsights.org/ci-workflows/self-test
+      tag: pr-{sha8}
+      context: tests/fixtures/hello
+      environment: harbor
+      push: true
+      timeout-minutes: 10
+
+  harbor-image-pr-outputs:
+    if: github.event_name == 'pull_request'
+    needs: harbor-image-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      IMAGE_REF: ${{ needs.harbor-image-pr.outputs.image-ref }}
+      DIGEST: ${{ needs.harbor-image-pr.outputs.digest }}
+    steps:
+      - run: |
+          echo "image-ref=$IMAGE_REF digest=$DIGEST"
+          [[ "$IMAGE_REF" == harbor.safeinsights.org/ci-workflows/self-test:pr-* ]]
+          [ -z "$DIGEST" ]
