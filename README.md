@@ -66,12 +66,16 @@ v4.0.0 moves the Harbor and cosign secrets out of pull requests' reach:
 - Create the environment with a `main`-only deployment branch policy and move the four secrets
   into it; see "Setting up a caller". Until the secrets are moved, the `push` job fails its secret
   check and nothing is pushed.
+- **Two scans are added** (both were in mars-university's own pipeline): the image scan also
+  looks for secrets in layers, and `trivy-fs.yaml` also scans dependency manifests and lockfiles,
+  failing on fixable CRITICAL vulnerabilities (`fail-on-severity`). A repo that passed on v3 can
+  gain findings; `trivyignores` accepts specific ones.
 
 ## `harbor-image.yaml`
 
-Every run builds the image and scans it with Trivy. Fixable HIGH and CRITICAL vulnerabilities are
-listed in the job summary. Fixable vulnerabilities at `fail-on-severity` fail the job before
-anything is pushed. Two jobs share those steps:
+Every run builds the image and scans it with Trivy for vulnerabilities and for secrets baked into
+a layer. Fixable HIGH and CRITICAL findings are listed in the job summary. Fixable findings at
+`fail-on-severity` fail the job before anything is pushed. Two jobs share those steps:
 
 - `build` runs on pull requests and on branches other than `main`. It holds no secret.
 - `push` runs only when `push` is true (the default), the event is not a pull request, and the ref
@@ -80,8 +84,9 @@ anything is pushed. Two jobs share those steps:
   is the image that is pushed and signed.
 
 The split is what keeps the secrets off pull requests: a PR can edit the caller's workflow, but a
-job it adds cannot enter an environment whose deployment branch policy allows `main` only, and
-the secrets exist nowhere else.
+job it adds cannot enter an environment whose deployment branch policy allows `main` only. That
+holds only while the secrets exist nowhere else. A repository secret of the same name still reaches
+PR runs, and the `push` job cannot tell which copy it got, so step 2 below deletes them.
 
 | Input | Default | Notes |
 |---|---|---|
@@ -105,8 +110,10 @@ Harbor. Outputs: `image-ref`, `digest`.
 ### Setting up a caller
 
 1. In the calling repo, create an environment (the examples use `harbor`) with **Deployment
-   branches and tags → Selected branches and tags → `main`**. Create it before the first run on
-   `main`: a job that names a missing environment creates it with no branch policy.
+   branches and tags → Selected branches and tags → `main`**, or fix an existing one: check that
+   its policy is exactly that before moving any secret into it. "No restriction" admits pull
+   requests, and "Protected branches only" admits every protected branch. Create it before the
+   first run on `main`: a job that names a missing environment creates it with no branch policy.
 2. Add the four secrets to that environment, not as repository secrets, and remove any repository
    secrets of the same name. A secret that exists only in the environment is empty on a pull
    request, which is the point. (SafeInsights uses no org secrets.)
@@ -155,12 +162,16 @@ jobs:
 
 ## `trivy-fs.yaml`
 
-Scans the caller's repo. Any committed secret fails the job. HIGH and CRITICAL misconfigurations,
-such as Dockerfiles that run as root, are listed in the job summary without failing.
+Scans the caller's repo. Any committed secret fails the job, and so does a fixable vulnerability
+at `fail-on-severity` in a dependency manifest or lockfile (dev dependencies included where Trivy
+distinguishes them: npm, yarn, gradle). HIGH and CRITICAL misconfigurations, such as Dockerfiles that run as root, and the
+other fixable HIGH/CRITICAL dependency vulnerabilities are listed in the job summary without
+failing. Trivy does not index CRAN, so R packages are not covered.
 
 | Input | Default | Notes |
 |---|---|---|
 | `trivyignores` | none | Path to a `.trivyignore.yaml` in the caller's repo, for accepted findings |
+| `fail-on-severity` | `CRITICAL` | e.g. `HIGH,CRITICAL` to be stricter |
 
 ```yaml
 jobs:

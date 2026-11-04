@@ -1,7 +1,8 @@
 name: Build and scan an image
 description: >-
   Builds a single-platform image into the local daemon, reports its fixable HIGH/CRITICAL
-  vulnerabilities and fails on the chosen severities. Shared by both jobs of harbor-image.yaml.
+  vulnerabilities and baked-in secrets, and fails on the chosen severities. Shared by both jobs of
+  harbor-image.yaml.
 
 inputs:
   image:
@@ -59,11 +60,12 @@ runs:
         platforms: ${{ inputs.platforms }}
         load: true
         tags: ${{ steps.ref.outputs.image-ref }}
-    - name: Report image vulnerabilities
+    # `secret` as well as `vuln`: a key copied into a layer is a finding at its own severity.
+    - name: Report image vulnerabilities and secrets
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         image-ref: ${{ steps.ref.outputs.image-ref }}
-        scanners: vuln
+        scanners: vuln,secret
         severity: HIGH,CRITICAL
         ignore-unfixed: true
         format: table
@@ -76,16 +78,16 @@ runs:
       shell: bash
       run: |
         {
-          echo "### Fixable HIGH/CRITICAL vulnerabilities"
+          echo "### Fixable HIGH/CRITICAL vulnerabilities and secrets in the image"
           echo '```'
           cat trivy-image.txt
           echo '```'
         } >> "$GITHUB_STEP_SUMMARY"
-    - name: Fail on ${{ inputs.fail-on-severity }} vulnerabilities
+    - name: Fail on ${{ inputs.fail-on-severity }} vulnerabilities and secrets
       uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
       with:
         image-ref: ${{ steps.ref.outputs.image-ref }}
-        scanners: vuln
+        scanners: vuln,secret
         severity: ${{ inputs.fail-on-severity }}
         ignore-unfixed: true
         format: table
