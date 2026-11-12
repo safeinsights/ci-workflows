@@ -9,14 +9,13 @@ Shared GitHub Actions workflows for SafeInsights repos. They replace the Jenkins
 | [`trivy-fs.yaml`](.github/workflows/trivy-fs.yaml) | Scans the repo for committed secrets (fails) and misconfigurations (reported) |
 | [`semgrep.yaml`](.github/workflows/semgrep.yaml) | Static analysis (SAST) with Semgrep CE: SafeInsights rules plus registry packs, annotates findings, keeps one PR comment current, fails on ERROR |
 | [`sonarqube.yaml`](.github/workflows/sonarqube.yaml) | Runs a SonarQube scan, optionally with a coverage artifact from another job |
+| [`ai-code-review.yaml`](.github/workflows/ai-code-review.yaml) | Reviews a pull request with OpenAI Codex (GPT-6.1 on Amazon Bedrock) and keeps one review comment current; skips drafts, bots and PRs from forks |
 
 ## Access
 
-This repo is **private**. Before other repos can call these workflows, an admin must set
-**Settings → Actions → General → Access** to "Accessible from repositories in the
-'safeinsights' organization". Public repos (e.g. management-app) can't call workflows in a
-private repo at all; make this repo public if they need them. Nothing secret is stored here,
-because callers pass their own secrets in.
+This repo is **public** so that the org's public repos (e.g. management-app) can call
+`ai-code-review.yaml`: a public repo cannot call a reusable workflow that lives in a private one.
+Nothing secret is stored here, because callers pass their own secrets in.
 
 ## Versioning
 
@@ -274,3 +273,56 @@ their fixtures (`semgrep scan --test`), scans this repo with `semgrep.yaml` and 
 builds and scans `tests/fixtures/hello` through `harbor-image.yaml` without pushing. Pushing and
 signing only happen on a caller's `main`, so the first such run is the real test of a change to
 those steps. Locally: `actionlint` from the repo root.
+
+## `ai-code-review.yaml`
+
+Runs [OpenAI Codex](https://github.com/openai/codex-action) on a pull request and posts its review as
+one comment from `github-actions[bot]`, edited in place on later runs. Inference runs on Amazon Bedrock
+in the si-devops AWS account: the job exchanges its GitHub OIDC token for
+`github-code-review-bedrock-role` (defined in
+[`iac/github-code-review`](https://github.com/safeinsights/iac/tree/main/github-code-review)) and
+Codex's `amazon-bedrock` provider picks those credentials up from the AWS SDK chain, so there is no
+API key, GitHub App or secret anywhere. The caller's own `GITHUB_TOKEN` fetches the diff and posts
+the comment; Codex never sees it.
+
+| Input | Default | Notes |
+|---|---|---|
+| `model` | `openai.gpt-6.1-sol` | Bedrock Mantle model ID. Sol is the Opus-class model (about $2.20 in / $11 out per million tokens); the role also allows `openai.gpt-6.1-terra`, the Sonnet-class model at about half that |
+
+Not reviewed, by design:
+
+- **PRs from forks.** GitHub issues no OIDC token to a run started from a fork, so the job skips them
+  (`if:`) rather than failing at the credentials step. On public repos, external contributors' PRs get
+  no bot review; push the branch into the repo to get one.
+- **Draft PRs**, until marked ready for review.
+- **PRs opened by bots** such as Dependabot: the action rejects bot actors, so the job skips them.
+
+The action also refuses PR authors without write access to the repo (its default). Codex runs under
+the read-only permission profile against a checkout that holds no token, with web search off, and the
+job has `contents: read`, `pull-requests: write`, `id-token: write` only. The worst a hostile PR can do
+is steer the review comment on itself.
+
+Costs: Bedrock tokens per review plus Actions minutes. A monthly Bedrock budget alert in si-devops is
+the backstop, and `concurrency` cancels a superseded review of the same PR.
+
+### Setting up a caller
+
+Nothing to configure in the repo: no secrets, no environment, no app install. Add the workflow below
+and grant the three permissions, which the called job needs. The AWS role trusts every
+`safeinsights/*` repo on `pull_request` events, so a new repo needs no AWS change.
+
+```yaml
+name: AI code review
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened] # add `synchronize` to re-review on every push (costs more)
+permissions:
+  contents: read
+jobs:
+  review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: safeinsights/ci-workflows/.github/workflows/ai-code-review.yaml@<commit sha> # v4.1.0
+```
