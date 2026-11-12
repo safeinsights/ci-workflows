@@ -276,7 +276,7 @@ those steps. Locally: `actionlint` from the repo root.
 
 ## `ai-code-review.yaml`
 
-Runs [OpenAI Codex](https://github.com/openai/codex-action) on a pull request and posts its review as
+Runs [OpenAI Codex](https://github.com/openai/codex) on a pull request and posts its review as
 one comment from `github-actions[bot]`, edited in place on later runs. Inference runs on Amazon Bedrock
 in the si-devops AWS account: the job exchanges its GitHub OIDC token for
 `github-code-review-bedrock-role` (defined in
@@ -295,12 +295,21 @@ Not reviewed, by design:
   (`if:`) rather than failing at the credentials step. On public repos, external contributors' PRs get
   no bot review; push the branch into the repo to get one.
 - **Draft PRs**, until marked ready for review.
-- **PRs opened by bots** such as Dependabot: the action rejects bot actors, so the job skips them.
+- **PRs opened by bots** such as Dependabot: version bumps that a human gates anyway.
 
-The action also refuses PR authors without write access to the repo (its default). Codex runs under
-the read-only permission profile against a checkout that holds no token, with web search off, and the
-job has `contents: read`, `pull-requests: write`, `id-token: write` only. The worst a hostile PR can do
-is steer the review comment on itself.
+Only PRs from branches in the same repository run, so the author already has write access. The
+`codex exec` CLI is run directly rather than through `openai/codex-action`: that action cannot run
+without an OpenAI API key, because the proxy it starts to keep the key away from Codex is mandatory,
+and here Codex authenticates with the job's AWS credentials itself. Codex runs in its read-only
+sandbox against a checkout that holds no token, with web search off, with only the core environment
+passed to the commands it runs (the AWS session stays out of their reach) and under `no_new_privs` so
+`sudo` is inert. The job has `contents: read`, `pull-requests: write`, `id-token: write` only. The
+worst a hostile PR can realistically do is steer the review comment on itself; the credentials Codex
+itself holds last an hour and are good for nothing but calling the two allowed models, which the
+budget bounds.
+
+The Codex CLI version is pinned in the workflow (`CODEX_VERSION`) and bumped by hand, since Dependabot
+does not see npm installs in `run` steps.
 
 Costs: Bedrock tokens per review plus Actions minutes. A monthly Bedrock budget alert in si-devops is
 the backstop, and `concurrency` cancels a superseded review of the same PR.
