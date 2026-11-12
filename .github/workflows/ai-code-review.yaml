@@ -21,11 +21,13 @@ jobs:
   review:
     # GitHub never issues an OIDC token or secrets to a run started from a fork, so skip those up front
     # instead of failing at the credentials step. Bot-authored PRs (Dependabot) are skipped because they
-    # are version bumps a human gates anyway, and drafts because nobody asked for a review yet.
+    # are version bumps a human gates anyway, and Dependabot's events carry a read-only token that could
+    # not post the comment; the PR's author is checked, not github.actor, which is whoever caused this
+    # particular event. Drafts are skipped because nobody asked for a review yet.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.draft == false &&
-      !endsWith(github.actor, '[bot]')
+      github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -60,13 +62,22 @@ jobs:
           gh api -H 'Accept: application/vnd.github.diff' "repos/$REPO/compare/$BASE...$HEAD" > "$RUNNER_TEMP/pr.diff"
           wc -c < "$RUNNER_TEMP/pr.diff"
 
+      # The session name makes each assumption attributable to a PR in CloudTrail. STS caps it at 64
+      # characters and repo names run to 100, so the repo part is cut to fit: 15 for the prefix, 42 for
+      # the repo, 1 for the dash and up to 6 for the PR number.
+      - name: Name the AWS session after the PR
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: echo "AWS_SESSION_NAME=ai-code-review-${REPO_NAME:0:42}-$PR" >> "$GITHUB_ENV"
+
       # The role lives in si-devops and is defined in safeinsights/iac (github-code-review/). Its ARN is
       # not a secret: the trust policy (pull_request jobs from safeinsights repos, by org name or org ID)
-      # is the control. The session name makes each assumption attributable to a PR in CloudTrail.
+      # is the control.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::432772479668:role/github-code-review-bedrock-role
-          role-session-name: ai-code-review-${{ github.event.repository.name }}-${{ github.event.pull_request.number }}
+          role-session-name: ${{ env.AWS_SESSION_NAME }}
           aws-region: us-east-1
 
       # Codex's built-in amazon-bedrock provider signs requests to the bedrock-mantle endpoint with the
