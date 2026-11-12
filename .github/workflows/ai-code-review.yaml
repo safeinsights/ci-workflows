@@ -58,8 +58,8 @@ jobs:
           wc -c < "$RUNNER_TEMP/pr.diff"
 
       # The role lives in si-devops and is defined in safeinsights/iac (github-code-review/). Its ARN is
-      # not a secret: the trust policy (repo:safeinsights/*:pull_request) is the control. The session
-      # name makes each assumption attributable to a PR in CloudTrail.
+      # not a secret: the trust policy (pull_request jobs from safeinsights repos, by org name or org ID)
+      # is the control. The session name makes each assumption attributable to a PR in CloudTrail.
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::432772479668:role/github-code-review-bedrock-role

@@ -308,8 +308,9 @@ the backstop, and `concurrency` cancels a superseded review of the same PR.
 ### Setting up a caller
 
 Nothing to configure in the repo: no secrets, no environment, no app install. Add the workflow below
-and grant the three permissions, which the called job needs. The AWS role trusts every
-`safeinsights/*` repo on `pull_request` events, so a new repo needs no AWS change.
+and grant the three permissions, which the called job needs. The AWS role trusts `pull_request` jobs
+from every `safeinsights` repo, by org name and by org ID (the immutable OIDC subject that repos
+created or renamed since 2026-07-15 present), so a new repo needs no AWS change.
 
 ```yaml
 name: AI code review
