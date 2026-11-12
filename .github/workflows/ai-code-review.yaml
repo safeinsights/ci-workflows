@@ -46,15 +46,18 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # The diff comes from the API rather than git so a shallow checkout of a private repo suffices.
-      # The token is confined to this step; Codex never sees it.
+      # The diff comes from the API rather than git so a shallow checkout of a private repo suffices,
+      # and from the event's own base and head commits rather than "the PR's current diff", which can
+      # have moved on since this run was triggered and would then disagree with the checkout. The token
+      # is confined to this step; Codex never sees it.
       - name: Collect the PR diff
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          gh pr diff "$PR" --repo "$REPO" > "$RUNNER_TEMP/pr.diff"
+          gh api -H 'Accept: application/vnd.github.diff' "repos/$REPO/compare/$BASE...$HEAD" > "$RUNNER_TEMP/pr.diff"
           wc -c < "$RUNNER_TEMP/pr.diff"
 
       # The role lives in si-devops and is defined in safeinsights/iac (github-code-review/). Its ARN is

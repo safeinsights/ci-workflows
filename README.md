@@ -302,11 +302,14 @@ Only PRs from branches in the same repository run, so the author already has wri
 without an OpenAI API key, because the proxy it starts to keep the key away from Codex is mandatory,
 and here Codex authenticates with the job's AWS credentials itself. Codex runs in its read-only
 sandbox against a checkout that holds no token, with web search off, with only the core environment
-passed to the commands it runs (the AWS session stays out of their reach) and under `no_new_privs` so
-`sudo` is inert. The job has `contents: read`, `pull-requests: write`, `id-token: write` only. The
+passed to the commands it runs (the AWS session is not in their environment) and under `no_new_privs`
+so `sudo` is inert. The job has `contents: read`, `pull-requests: write`, `id-token: write` only. The
 worst a hostile PR can realistically do is steer the review comment on itself; the credentials Codex
 itself holds last an hour and are good for nothing but calling the two allowed models, which the
-budget bounds.
+budget bounds. (The `GITHUB_ENV` file the credentials step wrote is not on disk either: the runner
+deletes each step's command files when the next step starts.) And anyone able to open such a PR
+already has `id-token: write` in a `safeinsights` repo and could assume the role from a workflow of
+their own, so a review steered into exposing the session would gain them nothing they lack.
 
 The Codex CLI version is pinned in the workflow (`CODEX_VERSION`) and bumped by hand, since Dependabot
 does not see npm installs in `run` steps.

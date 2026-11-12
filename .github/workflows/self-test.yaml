@@ -3,7 +3,10 @@ on:
   push:
     branches:
       - main
-  pull_request: {}
+  # ready_for_review is added to the default types so a draft gets its AI review when it is marked
+  # ready, not only on its next push.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
