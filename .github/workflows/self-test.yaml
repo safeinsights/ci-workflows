@@ -3,7 +3,10 @@ on:
   push:
     branches:
       - main
-  pull_request: {}
+  # ready_for_review is added to the default types so a draft gets its AI review when it is marked
+  # ready, not only on its next push.
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -46,6 +49,15 @@ jobs:
     uses: ./.github/workflows/semgrep.yaml
     with:
       exclude: tests
+
+  # Reviews this repo's own pull requests, so every change here is also an end-to-end test of the
+  # review: the OIDC exchange, the Bedrock call and the comment. Skipped on pushes to main (no PR).
+  ai-code-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    uses: ./.github/workflows/ai-code-review.yaml
 
   harbor-image:
     uses: ./.github/workflows/harbor-image.yaml
