@@ -47,7 +47,8 @@ jobs:
           WEBHOOK_SECRET: ${{ secrets.JIRA_READY_PR_WEBHOOK_SECRET }}
         run: |
           set -euo pipefail
-          keys() { grep -oiE "\b${PROJECT}-[0-9]+\b" | tr '[:lower:]' '[:upper:]' | sort -u || true; }
+          # Not \b: it treats _ as a word character, so feature_OTTER-123 would not match.
+          keys() { grep -oiE "(^|[^A-Za-z0-9])${PROJECT}-[0-9]+" | grep -oiE "${PROJECT}-[0-9]+" | tr '[:lower:]' '[:upper:]' | sort -u || true; }
           found=$(printf '%s\n%s\n' "$TITLE" "$BRANCH" | keys)
           source="title/branch"
           if [ -z "$found" ]; then
