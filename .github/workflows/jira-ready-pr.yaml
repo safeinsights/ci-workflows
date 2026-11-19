@@ -58,7 +58,7 @@ jobs:
             echo "No $PROJECT key in the title, branch or description."
             exit 0
           fi
-          echo "Keys from the $source: $(echo $found)"
+          echo "Keys from the $source: $(printf '%s ' "$found" | tr '\n' ' ')"
           payload=$(printf '%s\n' "$found" | jq -R . | jq -sc '{issues: .}')
           curl --fail-with-body --silent --show-error --max-time 30 \
             -H 'Content-Type: application/json' \
