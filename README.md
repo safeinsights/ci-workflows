@@ -10,6 +10,7 @@ Shared GitHub Actions workflows for SafeInsights repos. They replace the Jenkins
 | [`semgrep.yaml`](.github/workflows/semgrep.yaml) | Static analysis (SAST) with Semgrep CE: SafeInsights rules plus registry packs, annotates findings, keeps one PR comment current, fails on ERROR |
 | [`sonarqube.yaml`](.github/workflows/sonarqube.yaml) | Runs a SonarQube scan, optionally with a coverage artifact from another job |
 | [`ai-code-review.yaml`](.github/workflows/ai-code-review.yaml) | Reviews a pull request with OpenAI Codex (GPT-6.1 on Amazon Bedrock) and keeps one review comment current; skips drafts, bots and PRs from forks |
+| [`jira-ready-pr.yaml`](.github/workflows/jira-ready-pr.yaml) | Sends the Jira card keys of a ready (non-draft) PR to a Jira Automation webhook, which moves the cards to Code Review |
 
 ## Access
 
@@ -338,4 +339,39 @@ jobs:
       pull-requests: write
       id-token: write
     uses: safeinsights/ci-workflows/.github/workflows/ai-code-review.yaml@<commit sha> # v4.1.0
+```
+
+## `jira-ready-pr.yaml`
+
+Finds the Jira keys of a PR and POSTs them to the incoming webhook of the Jira Automation rule
+"OTTER: ready PR webhook -> Code Review". The rule moves each card that is left of Code Review to
+Code Review.
+
+Keys come from the PR title and branch name. The description is read only when those have no key.
+Jira itself links every key in a description, so with the old scheduled rule a PR that mentioned
+other cards moved them too.
+
+| Input | Default | Notes |
+|---|---|---|
+| `project-key` | `OTTER` | Jira project key to look for |
+
+Skipped: drafts (until ready for review), PRs from forks and PRs opened by bots, which get no secrets.
+
+### Setting up a caller
+
+The two secrets come from the rule's Incoming webhook trigger in Jira (Project settings, Automation).
+Set them once as org secrets that the calling repos can read.
+
+```yaml
+name: Jira ready PR
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, edited]
+permissions: {}
+jobs:
+  jira:
+    uses: safeinsights/ci-workflows/.github/workflows/jira-ready-pr.yaml@<commit sha> # v4.2.0
+    secrets:
+      JIRA_READY_PR_WEBHOOK_URL: ${{ secrets.JIRA_READY_PR_WEBHOOK_URL }}
+      JIRA_READY_PR_WEBHOOK_SECRET: ${{ secrets.JIRA_READY_PR_WEBHOOK_SECRET }}
 ```

@@ -1,0 +1,66 @@
+name: Jira ready PR
+
+# Tells a Jira Automation incoming webhook which cards a ready (non-draft) PR is for, so the rule
+# can move them to Code Review. It replaces a scheduled rule that moved every card Jira had linked to
+# an open PR: Jira links each key it finds in a PR's description, so a PR that only mentioned other
+# cards pulled them along too.
+#
+# Keys come from the PR title and branch name. Only when neither has one is the description used,
+# for PRs whose author put the key there alone.
+#
+# The caller passes two secrets from the Jira rule's incoming webhook trigger: the URL and the secret
+# Jira sends back in `X-Automation-Webhook-Token`. They start that one rule and nothing else.
+on:
+  workflow_call:
+    inputs:
+      project-key:
+        description: Jira project key to look for, e.g. OTTER
+        type: string
+        default: OTTER
+    secrets:
+      JIRA_READY_PR_WEBHOOK_URL:
+        required: true
+      JIRA_READY_PR_WEBHOOK_SECRET:
+        required: true
+
+permissions: {}
+
+jobs:
+  notify:
+    # Runs from forks and Dependabot get no secrets, so skip them instead of failing.
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      # The title, branch and body are author-controlled, so they reach the script only through env.
+      - name: Send the PR's card keys to Jira
+        env:
+          PROJECT: ${{ inputs.project-key }}
+          TITLE: ${{ github.event.pull_request.title }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          BODY: ${{ github.event.pull_request.body }}
+          WEBHOOK_URL: ${{ secrets.JIRA_READY_PR_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.JIRA_READY_PR_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          keys() { grep -oiE "\b${PROJECT}-[0-9]+\b" | tr '[:lower:]' '[:upper:]' | sort -u || true; }
+          found=$(printf '%s\n%s\n' "$TITLE" "$BRANCH" | keys)
+          source="title/branch"
+          if [ -z "$found" ]; then
+            found=$(printf '%s\n' "$BODY" | keys)
+            source="description"
+          fi
+          if [ -z "$found" ]; then
+            echo "No $PROJECT key in the title, branch or description."
+            exit 0
+          fi
+          echo "Keys from the $source: $(echo $found)"
+          payload=$(printf '%s\n' "$found" | jq -R . | jq -sc '{issues: .}')
+          curl --fail-with-body --silent --show-error --max-time 30 \
+            -H 'Content-Type: application/json' \
+            -H "X-Automation-Webhook-Token: $WEBHOOK_SECRET" \
+            -d "$payload" "$WEBHOOK_URL"
