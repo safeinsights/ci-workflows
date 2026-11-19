@@ -327,37 +327,3 @@ one. Installing the app for the dev panel is still worthwhile, but independent o
   the prompt would say "do not raise again a finding the author answered, unless the diff changed
   that code". On a public repository anyone can comment on a PR, so it would include only comments
   with `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`, or by the PR's author.
-- Follow-up, not designed: let Codex see what the card shows rather than what it says. For a UI card
-  the mockup is the acceptance criterion, so this is where a text-only review misses the most. All
-  three media below end in the same place: still images handed to Codex. That needs image input in
-  `codex exec` and image input on the Bedrock models, and neither has been checked. The notes below
-  describe how local reviews done by hand get at each medium today, as a starting point.
-  - **Card images and attachments.** The issue's `attachment` field lists id, file name, MIME type
-    and size; the content comes from `GET /rest/api/2/attachment/content/<id>` through the same
-    gateway and token (the `read:jira-work` scope is expected to cover it; not checked). Locally the
-    reviewer downloads only the attachments the description or a comment refers to, one at a time,
-    and looks at each image. A CI version would filter by MIME type (`image/*`), cap the count and
-    the bytes, and match the `!name.png!` markers in the description to file names, so Codex knows
-    which image belongs to which requirement.
-  - **Figma.** Links on the card, in its comments or in the PR body name a file key and a node id.
-    Locally the reviewer reads the node's structure (layout, text, design tokens) and a rendered
-    screenshot of it. The Figma REST API gives both: `GET /v1/files/<key>/nodes?ids=<node>` for the
-    structure and `GET /v1/images/<key>?ids=<node>&format=png` for a render URL, with an
-    `X-Figma-Token` header. That is a second secret (a read-only Figma token for a bot account that
-    can open the team's files) with its own rotation row in the secret-management policy. The
-    structure alone is text, so it helps even without image input: a named token in Figma against a
-    hardcoded value in the diff is a finding Codex could raise from text.
-  - **Videos (Jira attachments and Google Drive links).** Bug reports and walkthroughs often come as a
-    screen recording. No model input here takes video, so locally the reviewer turns it into images:
-    download the file, then extract frames with `ffmpeg`, either one frame every few seconds
-    (`-vf fps=1/3`) or one per scene change (`-vf "select='gt(scene,0.3)'" -vsync vfr`), capped at
-    about 20 frames, and look at those frames in order. A Jira video attachment downloads like any
-    other attachment. A Google Drive link (`https://drive.google.com/file/d/<id>/view`) downloads
-    with plain `curl` from `https://drive.google.com/uc?export=download&id=<id>` only when the file is
-    shared as "anyone with the link"; for large files Google answers with a virus-scan page instead,
-    and `https://drive.usercontent.google.com/download?id=<id>&export=download&confirm=t` skips it
-    (observed behavior, not a documented API, so it can change). A Drive file shared only inside the
-    organization needs a Google credential, a third secret. Narration in the recording is lost:
-    `ffmpeg` keeps only the picture, and a transcript would need a speech-to-text step. On a public
-    repository, frames can show private data, so the paraphrase rule applies to them as to card
-    text.
