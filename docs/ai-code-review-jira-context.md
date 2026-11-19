@@ -325,9 +325,16 @@ one. Installing the app for the dev panel is still worthwhile, but independent o
   "Comment on the PR" step already finds the previous `<!-- ai-code-review -->` comment; a new step
   before Codex would write it, plus PR comments posted after it, to `$RUNNER_TEMP/previous.md`, and
   the prompt would say "do not raise again a finding the author answered, unless the diff changed
-  that code". On a public repository anyone can comment on a PR, so only comments with
-  `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`, or by the PR's author, may be included.
-  Left out of this plan because it widens what untrusted text reaches Codex.
+  that code". Left out of this plan because it widens what untrusted text reaches Codex.
+
+  > [!WARNING]
+  > **Prompt injection.** On a public repository anyone with a GitHub account can comment on a PR.
+  > Passing PR comments to Codex lets an outsider put text into the prompt, for example to suppress
+  > a real finding or to make Codex quote card text into the public review. Only comments with
+  > `author_association` `OWNER`, `MEMBER` or `COLLABORATOR`, or by the PR's author, may be
+  > included, and the prompt must call them material, never instructions. The PR title and
+  > description in this plan carry no new risk: fork PRs are skipped, so they come from someone with
+  > write access to the repository, the same person who controls the diff.
 - Follow-up, not designed: let Codex see the card's images. It needs the attachment download through
   the same scoped token, image input in `codex exec`, and image input on the Bedrock models; none of
   the three has been checked. Figma designs would need a Figma credential, a second secret.
